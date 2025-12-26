@@ -1,8 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { Repertoire, UserStats, TrainingMode } from '../types';
-import { Plus, BookOpen, Trash2, LogOut, Target, Layout, Library as LibraryIcon, X, Check, ArrowRight, Settings, Mic } from 'lucide-react';
-import TrainingHub from './TrainingHub';
+import { Repertoire } from '../types';
+import { Plus, BookOpen, Trash2, LogOut, Layout, Library as LibraryIcon, X, ArrowRight, Settings, Info, GraduationCap, PenTool, Search, Filter, Target } from 'lucide-react';
 import OpeningLibrary from './OpeningLibrary';
 import { EcoCode } from '../ecoCodes';
 import { Chess } from 'chess.js';
@@ -10,14 +9,11 @@ import Board from './Board';
 
 interface DashboardProps {
   onSelectRepertoire: (rep: Repertoire) => void;
-  onStartTrainingSession?: (rep: Repertoire, mode: TrainingMode, savedState?: any) => void;
-  onEnterCoachMode: () => void; // Kept for interface compatibility but disabled
-  userStats: UserStats;
+  onOpenTraining: () => void;
 }
 
 // --- SETTINGS MODAL ---
 const SettingsModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-    // Basic settings could go here in future
     return (
         <div className="fixed inset-0 z-[150] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
             <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-md w-full p-6 relative">
@@ -39,6 +35,102 @@ const SettingsModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                      >
                          Close
                      </button>
+                 </div>
+            </div>
+        </div>
+    );
+};
+
+// --- ABOUT PALAMEDES MODAL ---
+const AboutModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+    return (
+        <div className="fixed inset-0 z-[150] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-300">
+            <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl max-w-2xl w-full flex flex-col max-h-[90vh] overflow-hidden">
+                 {/* Header */}
+                 <div className="p-6 border-b border-slate-800 flex justify-between items-start bg-slate-900 sticky top-0 z-10">
+                     <div>
+                         <h2 className="text-2xl font-black text-white flex items-center gap-3 tracking-tight">
+                             <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-amber-700 rounded-lg flex items-center justify-center shadow-lg">
+                                 <BookOpen size={18} className="text-white" />
+                             </div>
+                             Palamedes
+                         </h2>
+                         <p className="text-xs text-amber-500 font-bold uppercase tracking-widest mt-2 ml-1">Research Artifact</p>
+                     </div>
+                     <button onClick={onClose} className="text-slate-500 hover:text-white p-1 hover:bg-slate-800 rounded-lg transition-colors"><X size={24} /></button>
+                 </div>
+
+                 {/* Scrollable Content */}
+                 <div className="overflow-y-auto p-6 space-y-8 text-slate-300 leading-relaxed custom-scrollbar">
+                     
+                     {/* Mythology Section */}
+                     <section className="bg-slate-800/30 p-5 rounded-xl border border-slate-700/50">
+                         <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                             <GraduationCap size={18} className="text-indigo-400" /> Origin & Methodology
+                         </h3>
+                         <p className="text-sm mb-4">
+                             In Greek mythology, <strong>Palamedes</strong> (Παλαμήδης) was a hero of the Trojan War, credited with inventions that brought order to civilization: the alphabet, numbers, currency, and—crucially for us—<strong>dice and strategic games (pessoí)</strong>.
+                         </p>
+                         <p className="text-sm">
+                             He represents the triumph of intellect, systematic thought, and the ordering of chaos. Just as Palamedes brought structure to play, this application brings structure to the infinite complexity of Chess. It is a tool for building memory and refining strategy through systematic, data-assisted preparation.
+                         </p>
+                     </section>
+
+                     {/* Research Context */}
+                     <section>
+                         <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 border-b border-slate-800 pb-1">Authorship & Research Context</h3>
+                         <div className="space-y-4 text-sm">
+                             <p>
+                                 <strong>Palamedes</strong> is an <strong>experimental research and design project</strong> developed by <strong>Ephraim Ferreira Medeiros</strong>, UX Designer.
+                             </p>
+                             <p>
+                                 The project serves as an applied exploration of:
+                             </p>
+                             <ul className="list-disc pl-5 space-y-1 text-slate-400">
+                                 <li>Cognition-driven UX</li>
+                                 <li>Memory systems (Spaced Repetition)</li>
+                                 <li>Interaction design for expert users</li>
+                                 <li>Data-assisted preparation workflows in complex domains</li>
+                             </ul>
+                             <p className="text-xs text-slate-500 italic mt-2">
+                                 Palamedes is not positioned as a commercial product at this stage. It is a <strong>research artifact</strong>, intended to test architectural, UX, and learning-science hypotheses in a real, non-trivial system.
+                             </p>
+                         </div>
+                     </section>
+
+                     {/* Author Profile */}
+                     <section className="bg-slate-950 border border-slate-800 rounded-xl p-5 flex flex-col md:flex-row gap-6 items-start">
+                         <div className="flex-1">
+                             <h3 className="text-lg font-bold text-white mb-1 flex items-center gap-2">
+                                <PenTool size={16} className="text-emerald-500" /> Ephraim Ferreira Medeiros
+                             </h3>
+                             <p className="text-xs text-emerald-500 font-bold uppercase tracking-wide mb-4">UX Designer & Research-Driven Product Designer</p>
+                             
+                             <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Specializations & Formal Training</h4>
+                             <ul className="space-y-2 text-xs text-slate-400">
+                                 <li className="flex justify-between border-b border-slate-800/50 pb-1">
+                                     <span>User Experience Research and Design</span>
+                                     <span className="text-slate-500">University of Michigan</span>
+                                 </li>
+                                 <li className="flex justify-between border-b border-slate-800/50 pb-1">
+                                     <span>Google UX Design</span>
+                                     <span className="text-slate-500">Google</span>
+                                 </li>
+                                 <li className="flex justify-between border-b border-slate-800/50 pb-1">
+                                     <span>Machine Learning</span>
+                                     <span className="text-slate-500">DeepLearning.AI · Stanford University</span>
+                                 </li>
+                                 <li className="flex justify-between border-b border-slate-800/50 pb-1">
+                                     <span>AI for Good</span>
+                                     <span className="text-slate-500">DeepLearning.AI</span>
+                                 </li>
+                                 <li className="flex justify-between pt-1">
+                                     <span>Interaction Design</span>
+                                     <span className="text-slate-500">University of California, San Diego</span>
+                                 </li>
+                             </ul>
+                         </div>
+                     </section>
                  </div>
             </div>
         </div>
@@ -149,7 +241,7 @@ const OpeningPreviewModal: React.FC<{
     );
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onStartTrainingSession, onEnterCoachMode, userStats }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onOpenTraining }) => {
   const [repertoires, setRepertoires] = useState<Repertoire[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -157,11 +249,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onStartTraini
   const [newRepColor, setNewRepColor] = useState<'white' | 'black'>('white');
   const [userEmail, setUserEmail] = useState<string | undefined>('');
   
-  const [activeTab, setActiveTab] = useState<'repertoires' | 'training' | 'library'>('repertoires');
-  const [globalDueCount, setGlobalDueCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<'repertoires' | 'library'>('repertoires');
 
-  // Settings
+  // Settings & About
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
 
   // Library Preview State
   const [previewOpening, setPreviewOpening] = useState<EcoCode | null>(null);
@@ -169,22 +261,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onStartTraini
   useEffect(() => {
     fetchRepertoires();
     supabase.auth.getUser().then(({ data }) => setUserEmail(data.user?.email));
-    
-    // Simple fetch for total due moves count
-    const fetchGlobalDue = async () => {
-        try {
-            const today = new Date().toISOString();
-            const { count, error } = await supabase
-                .from('moves')
-                .select('*', { count: 'exact', head: true })
-                .lte('next_review_at', today);
-            
-            if (!error && count !== null) {
-                setGlobalDueCount(count);
-            }
-        } catch(e) { console.error(e); }
-    };
-    fetchGlobalDue();
   }, []);
 
   const fetchRepertoires = async () => {
@@ -309,21 +385,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onStartTraini
 
   const handleSignOut = () => supabase.auth.signOut();
 
-  const handleHubSessionStart = (mode: TrainingMode, rep?: Repertoire, savedState?: any) => {
-      if (!rep) {
-          alert("Please select a repertoire first.");
-          return;
-      }
-      if (onStartTrainingSession) {
-          onStartTrainingSession(rep, mode, savedState);
-      }
-  };
-
   return (
     <div className="min-h-screen bg-slate-950 font-sans text-slate-200 flex flex-col md:flex-row">
       
-      {/* Settings Modal */}
+      {/* Modals */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
 
       {previewOpening && (
           <OpeningPreviewModal 
@@ -336,13 +403,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onStartTraini
       {/* SIDEBAR NAVIGATION - Sticky on desktop */}
       <div className="w-full md:w-64 bg-slate-900 border-b md:border-b-0 md:border-r border-slate-800 flex flex-col shrink-0 md:sticky md:top-0 md:h-screen z-10">
           <div className="p-6 border-b border-slate-800">
-              <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-                  <div className="w-8 h-8 bg-amber-600 rounded-lg flex items-center justify-center shadow-lg">
+              <h1 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
+                  <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-amber-700 rounded-lg flex items-center justify-center shadow-lg">
                       <BookOpen size={18} className="text-white" />
                   </div>
-                  Chess Vibe
+                  Palamedes
               </h1>
-              <p className="text-slate-500 text-xs mt-2 truncate">{userEmail}</p>
+              <p className="text-slate-500 text-[10px] mt-2 truncate font-mono uppercase tracking-widest pl-1">
+                  Systematic Prep
+              </p>
           </div>
 
           <div className="flex-1 p-4 space-y-2 overflow-y-auto">
@@ -359,26 +428,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onStartTraini
                   <LibraryIcon size={18} /> Opening Library
               </button>
               <button 
-                  onClick={() => setActiveTab('training')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${activeTab === 'training' ? 'bg-slate-800 text-white shadow-md border border-slate-700' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}
+                  onClick={onOpenTraining}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-amber-500 hover:text-amber-400 hover:bg-amber-900/10"
               >
                   <Target size={18} /> Training Center
-                  {globalDueCount > 0 && (
-                      <span className="ml-auto bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">{globalDueCount}</span>
-                  )}
               </button>
               
-              <div className="pt-4 mt-4 border-t border-slate-800">
+              <div className="pt-4 mt-4 border-t border-slate-800 space-y-1">
                    <button 
                       onClick={() => setShowSettings(true)}
                       className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-slate-400 hover:text-white hover:bg-slate-800/50"
                   >
                       <Settings size={18} /> Settings
                   </button>
+                  <button 
+                      onClick={() => setShowAbout(true)}
+                      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all text-indigo-400 hover:text-white hover:bg-indigo-900/20"
+                  >
+                      <Info size={18} /> About Palamedes
+                  </button>
               </div>
           </div>
 
           <div className="p-4 border-t border-slate-800">
+              <div className="text-[10px] text-slate-600 mb-2 px-1 truncate">{userEmail}</div>
               <button 
                 onClick={handleSignOut}
                 className="w-full flex items-center gap-2 px-4 py-2 bg-slate-950 hover:bg-red-900/20 text-slate-400 hover:text-red-400 rounded-lg text-sm transition-colors border border-slate-800 hover:border-red-900/50"
@@ -478,20 +551,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onStartTraini
                             )}
                         </div>
                     )}
-                </div>
-            )}
-
-            {activeTab === 'training' && (
-                <div className="h-full">
-                    {/* Render TrainingHub in 'Global' mode with Repertoires context */}
-                    <TrainingHub 
-                        isTrainingActive={false} 
-                        onStartSession={handleHubSessionStart}
-                        userStats={userStats}
-                        dueCount={globalDueCount}
-                        repertoires={repertoires} // Pass active repertoires to Hub
-                        repertoireColor="white" 
-                    />
                 </div>
             )}
 

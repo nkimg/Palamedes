@@ -1,5 +1,5 @@
 {
-  "name": "IA Repertoire Builder Chess ",
-  "description": "A sleek, dark-mode chess analysis board featuring move validation, history tracking, and FEN export capabilities.",
+  "name": "Palamedes",
+  "description": "An experimental research and design project for cognition-driven chess preparation.",
   "requestFramePermissions": []
 }

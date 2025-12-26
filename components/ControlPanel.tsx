@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { 
-  RotateCcw, Copy, Repeat, Trophy, AlertTriangle, 
+  RotateCcw, Copy, Repeat, AlertTriangle, 
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, 
-  Import, MessageSquare, Cpu, Activity, Trash2, GitBranch, CornerDownRight, Brain, BookOpen, Database, Search, FileText, X, Play, Pause, ChevronDown, PlayCircle, Layers, CheckSquare, Square, Swords, Download, ExternalLink, TrendingUp, User, Globe, Loader2, Lightbulb, ShieldAlert, ShieldCheck, Book, Library, Calendar, Paperclip, Settings, Zap, LayoutList, AlignLeft, Grid3X3, Split, Video, Plus, Star
+  Import, MessageSquare, Cpu, Activity, Trash2, GitBranch, CornerDownRight, BookOpen, Database, Search, X, Play, Pause, ChevronDown, PlayCircle, Layers, CheckSquare, Square, Download, ExternalLink, Video, Plus, Star, LayoutList, AlignLeft, Grid3X3, Split, Calendar, Paperclip, Loader2, Lightbulb, Book, ShieldCheck
 } from 'lucide-react';
-import { GameState, MoveNode, EngineAnalysis, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, TrainingMode, PawnStructureAnalysis, Repertoire, VideoMetadata } from '../types';
+import { GameState, MoveNode, EngineAnalysis, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, PawnStructureAnalysis, Repertoire, VideoMetadata } from '../types';
 import { Chess, Move } from 'chess.js';
 import OpeningExplorer from './OpeningExplorer';
 import Board from './Board'; 
@@ -25,7 +25,6 @@ interface ControlPanelProps {
   isAnalyzing: boolean;
   onToggleAnalysis: () => void;
   analysisData: Record<number, EngineAnalysis>;
-  onStartTraining: (mode: TrainingMode, fromCurrentPosition?: boolean) => void;
   
   // Explorer Props
   explorerData: ExplorerData | null;
@@ -56,6 +55,11 @@ interface ControlPanelProps {
   currentRepertoire: Repertoire | null;
   onUpdateRepertoire: (rep: Repertoire) => void;
 }
+
+// ... (KEEP EXISTING MODALS AND HELPER COMPONENTS - ConfirmationModal, VideoPlayerModal, MoveTreeRenderer, MoveSheetRecursive, MoveCardRenderer) ...
+// Note: To save space, I will just provide the modified ControlPanel functional component content below, assuming the helpers above it remain unchanged as they are utility components within the file. 
+// However, standard protocol is to provide full file content. 
+// I will include the full file content to be safe and correct.
 
 // --- CONFIRMATION MODAL ---
 const ConfirmationModal: React.FC<{
@@ -390,7 +394,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   isAnalyzing,
   onToggleAnalysis,
   analysisData,
-  onStartTraining,
   explorerData,
   mastersData,
   lichessData,
@@ -690,8 +693,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
           {gameState.turn === 'w' ? "White's Turn" : "Black's Turn"}
         </div>
         <div className="flex gap-2">
-           <button onClick={() => onStartTraining('recall')} className="text-xs flex items-center gap-1 px-2 py-1 rounded transition-colors bg-amber-600 hover:bg-amber-500 text-white font-bold border border-amber-500"><Brain size={14} /><span className="hidden sm:inline">Train</span></button>
-           <button onClick={() => onStartTraining('sparring', true)} className="text-xs flex items-center gap-1 px-2 py-1 rounded transition-colors bg-indigo-600 hover:bg-indigo-500 text-white font-bold border border-indigo-500 shadow-sm"><Swords size={14} /><span className="hidden sm:inline">Spar</span></button>
            <button onClick={onToggleAnalysis} className={`text-xs flex items-center gap-1 px-2 py-1 rounded transition-colors border ${isAnalyzing ? 'bg-green-900/50 border-green-700 text-green-400' : 'bg-slate-700 border-transparent text-slate-300 hover:bg-slate-600'}`}><Cpu size={14} className={isAnalyzing ? 'animate-pulse' : ''} /><span className="hidden sm:inline">Engine</span></button>
            <button onClick={() => setShowImport(true)} className="text-xs flex items-center gap-1 bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded transition-colors"><Import size={12} /> <span className="hidden sm:inline">Import</span></button>
         </div>

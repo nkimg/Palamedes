@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Chess, Square, Move, Color } from 'chess.js';
-import { GameState, BoardOrientation, MoveNode, EngineAnalysis, Repertoire, DbMove, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, TrainingMode, UserStats, DrillSettings } from './types';
+import { GameState, BoardOrientation, MoveNode, EngineAnalysis, Repertoire, DbMove, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, PawnStructureAnalysis, UserTrainingStats, TrainingLog, TrainingSessionStats } from './types';
 import Board from './components/Board';
 import ControlPanel from './components/ControlPanel';
-import TrainingPanel from './components/TrainingPanel'; 
-import TrainingHub from './components/TrainingHub'; 
+import TrainingPanel from './components/TrainingPanel';
+import TrainingHub from './components/TrainingHub';
 import Auth from './components/Auth';
 import Dashboard from './components/Dashboard';
 import { supabase } from './supabaseClient';
-import { ArrowLeft, MessageSquare, LayoutGrid, X, Play, Pause, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Repeat, BookOpen, Calendar, Trophy, Database, Cpu, Zap, Loader2, Trash2 } from 'lucide-react';
+import { ArrowLeft, MessageSquare, LayoutGrid, X, Play, Pause, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Repeat, Trash2 } from 'lucide-react';
 import { fetchOpeningStats, fetchUserGames, fetchMasterGame } from './lichessClient';
 
 // Utility to generate unique IDs 
@@ -49,7 +49,7 @@ const injectRepertoireFen = (pgn: string, fen: string): string => {
     return `[RepertoireFen "${fen}"]\n${pgn}`;
 };
 
-// --- GAME VIEWER MODAL (Moved from ControlPanel to App to be accessible globally) ---
+// --- GAME VIEWER MODAL ---
 const GameViewerModal: React.FC<{ metadata: GameMetadata; onClose: () => void }> = ({ metadata, onClose }) => {
   const [game, setGame] = useState(new Chess());
   const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
@@ -202,6 +202,9 @@ const GameViewerModal: React.FC<{ metadata: GameMetadata; onClose: () => void }>
 };
 
 function App() {
+  // --- APP MODE & ROUTING ---
+  const [viewMode, setViewMode] = useState<'dashboard' | 'training-hub' | 'training-active' | 'analysis'>('dashboard');
+
   // --- AUTH & ROUTING STATE ---
   const [session, setSession] = useState<any>(null);
   const [currentRepertoire, setCurrentRepertoire] = useState<Repertoire | null>(null);
@@ -220,7 +223,22 @@ function App() {
   const [analysisData, setAnalysisData] = useState<Record<number, EngineAnalysis>>({});
   const engineWorkerRef = useRef<Worker | null>(null);
   const latestFenRef = useRef(game.fen());
-  const isBotThinking = useRef(false); // Track if we are waiting for a bot move
+
+  // --- TRAINING STATE ---
+  const [trainingState, setTrainingState] = useState<{
+      active: boolean;
+      feedback: 'correct' | 'incorrect' | 'waiting' | 'none' | 'completed';
+      currentNode: MoveNode | null; // Tracks position in tree
+  }>({ active: false, feedback: 'waiting', currentNode: null });
+
+  const [sessionStats, setSessionStats] = useState<TrainingSessionStats>({
+      correct: 0,
+      errors: 0,
+      movesLeft: 0
+  });
+
+  // User Stats (Global)
+  const [userStats, setUserStats] = useState<UserTrainingStats | null>(null);
 
   // --- EXPLORER STATE ---
   // Specific data for the dashboard (fetched in parallel)
@@ -241,22 +259,6 @@ function App() {
   const [importedGames, setImportedGames] = useState<ImportedGame[]>([]);
   const [currentMovePath, setCurrentMovePath] = useState<string[]>([]); // Track SAN history for matching
   const [viewingGameMetadata, setViewingGameMetadata] = useState<GameMetadata | null>(null);
-
-  // --- TRAINING STATE ---
-  const [inTrainingMode, setInTrainingMode] = useState(false); // Main toggle for the "Section"
-  const [isSessionActive, setIsSessionActive] = useState(false); // Specific toggle for "Active Drill"
-
-  const [trainingMode, setTrainingMode] = useState<TrainingMode>('recall'); // recall or sparring
-  const [trainingFeedback, setTrainingFeedback] = useState<'correct' | 'incorrect' | 'waiting' | null>(null);
-  const [correctTrainingMove, setCorrectTrainingMove] = useState<string | null>(null);
-  const [dueMovesCount, setDueMovesCount] = useState(0);
-  const botMoveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
-  // New Drill Settings
-  const [drillSettings, setDrillSettings] = useState<DrillSettings | null>(null);
-
-  // Gamification
-  const [userStats, setUserStats] = useState<UserStats>({ xp: 0, level: 1, streak: 0 });
 
   // --- TREE STATE ---
   const [rootNode, setRootNode] = useState<MoveNode>({
@@ -291,6 +293,27 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Fetch User Stats on Session Change
+  useEffect(() => {
+    if (session?.user) {
+        fetchUserStats();
+    }
+  }, [session]);
+
+  const fetchUserStats = async () => {
+    try {
+        const { data, error } = await supabase
+            .from('user_training_stats')
+            .select('*')
+            .eq('user_id', session.user.id)
+            .single();
+        
+        if (data) setUserStats(data);
+    } catch (e) {
+        console.error("Error fetching stats", e);
+    }
+  };
+
   // --- ENGINE INITIALIZATION (STOCKFISH) ---
   useEffect(() => {
     // Initialize Stockfish Worker
@@ -302,28 +325,13 @@ function App() {
         const worker = new Worker(blobUrl);
         
         worker.postMessage('uci');
-        // Configure for 3 lines (MultiPV)
         worker.postMessage('setoption name MultiPV value 3');
-        // Reduce skill level slightly for Sparring by default, can be adjusted
-        // worker.postMessage('setoption name Skill Level value 10'); 
         
         worker.onmessage = (e) => {
           const msg = e.data;
           
           if (typeof msg === 'string' && msg.startsWith('info') && msg.includes('depth') && msg.includes('score')) {
              parseEngineOutput(msg);
-          }
-          
-          // Sparring Bot Move (Legacy/Fallback engine move)
-          if (typeof msg === 'string' && msg.startsWith('bestmove')) {
-             const bestMoveParts = msg.split(' ');
-             const uciMove = bestMoveParts[1];
-             // Only apply move if we were explicitly waiting for it (isBotThinking)
-             // AND we are in sparring mode using 'engine' source (or fallback)
-             if (uciMove && uciMove !== '(none)' && inTrainingMode && trainingMode === 'sparring' && isBotThinking.current) {
-                 handleBotMove(uciMove);
-                 isBotThinking.current = false;
-             }
           }
         };
 
@@ -340,7 +348,7 @@ function App() {
         engineWorkerRef.current.terminate();
       }
     };
-  }, [inTrainingMode, trainingMode, currentRepertoire]);
+  }, []);
 
   const parseEngineOutput = (line: string) => {
       // Example: info depth 18 seldepth 26 multipv 1 score cp 32 ... pv e2e4 c7c5
@@ -386,51 +394,6 @@ function App() {
               ...prev,
               [lineIndex]: analysis
           }));
-      }
-  };
-
-  const handleBotMove = (uciOrSan: string) => {
-      // Use latestFenRef to avoid stale state in closure
-      const currentFen = latestFenRef.current;
-      
-      // Try to parse as SAN first, then UCI
-      try {
-          const tempGame = new Chess(currentFen);
-          
-          // Safety Check: Ensure it is actually the bot's turn
-          // We assume bot plays opposing color of repertoire
-          const repColor = currentRepertoire?.color === 'white' ? 'w' : 'b';
-          if (tempGame.turn() === repColor) {
-              return;
-          }
-
-          let move;
-          // Check if UCI (length 4 or 5 and looks like coords)
-          if (uciOrSan.match(/^[a-h][1-8][a-h][1-8][qrbn]?$/)) {
-             const from = uciOrSan.slice(0, 2) as Square;
-             const to = uciOrSan.slice(2, 4) as Square;
-             const promotion = uciOrSan.length === 5 ? uciOrSan.slice(4) : undefined;
-             move = tempGame.move({ from, to, promotion });
-          } else {
-             move = tempGame.move(uciOrSan);
-          }
-
-          if (move) {
-              setGame(tempGame);
-              setLastMove({ from: move.from, to: move.to });
-              
-              // In Drill Mode, we also need to update the tree node tracking
-              if (inTrainingMode && trainingMode === 'recall' && currentNode) {
-                  // Find the child node corresponding to this move
-                  const child = currentNode.children.find(c => c.san === move.san);
-                  if (child) {
-                      setCurrentNode(child);
-                  }
-              }
-          }
-      } catch(e) { 
-          // Log warning instead of error to avoid cluttering console for stale moves
-          console.warn("Bot invalid move ignored:", uciOrSan); 
       }
   };
 
@@ -532,19 +495,17 @@ function App() {
     };
     
     try {
+      // ORDERING FIX: Order by created_at to ensure input order determines main line
       const { data: dbMoves, error } = await supabase
         .from('moves')
         .select('*')
-        .eq('repertoire_id', repId);
+        .eq('repertoire_id', repId)
+        .order('created_at', { ascending: true }); // Critical fix for Main Line detection
 
       if (error) throw error;
 
       if (dbMoves && dbMoves.length > 0) {
         buildTreeFromDb(newRoot, dbMoves as DbMove[]);
-        
-        const now = new Date();
-        const due = dbMoves.filter((m: DbMove) => m.next_review_at && new Date(m.next_review_at) <= now).length;
-        setDueMovesCount(due);
       }
       
       setRootNode(newRoot);
@@ -563,6 +524,7 @@ function App() {
   const buildTreeFromDb = (root: MoveNode, dbMoves: DbMove[]) => {
     const nodeMap = new Map<string, MoveNode>();
     
+    // First Pass: Create all nodes
     dbMoves.forEach(dbMove => {
        const moveObj = {
            from: dbMove.uci ? (dbMove.uci.slice(0,2) as Square) : 'a1', 
@@ -583,16 +545,13 @@ function App() {
            color: dbMove.color as Color,
            source: dbMove.source, 
            metadata: dbMove.metadata,
-           srs: {
-             nextReview: dbMove.next_review_at,
-             interval: dbMove.interval || 0,
-             ease: dbMove.ease_factor || 2.5,
-             repetitions: dbMove.repetitions || 0
-           }
        };
        nodeMap.set(dbMove.id, node);
     });
 
+    // Second Pass: Link parents and children
+    // Because we ordered by created_at in the SQL query, the loop order preserves insertion order.
+    // The first child pushed to the array will be the main line (index 0).
     dbMoves.forEach(dbMove => {
         const node = nodeMap.get(dbMove.id)!;
         if (dbMove.parent_id) {
@@ -616,7 +575,7 @@ function App() {
     inCheckmate: game.isCheckmate(),
     inDraw: game.isDraw(),
     isGameOver: game.isGameOver(),
-    hasHistory: false,
+    hasHistory: rootNode.children.length > 0,
   });
 
   const updateGameState = useCallback(() => {
@@ -641,8 +600,6 @@ function App() {
   useEffect(() => {
     if (explorerDebounceRef.current) clearTimeout(explorerDebounceRef.current);
     
-    if (inTrainingMode) return;
-
     explorerDebounceRef.current = setTimeout(async () => {
       setIsExplorerLoading(true);
       
@@ -668,7 +625,7 @@ function App() {
     return () => {
       if (explorerDebounceRef.current) clearTimeout(explorerDebounceRef.current);
     };
-  }, [gameState.fen, inTrainingMode]); // Removed explorerSettings dependency for the dashboard fetch
+  }, [gameState.fen]);
 
   const handleExplorerMove = (san: string) => {
     try {
@@ -897,31 +854,19 @@ function App() {
     latestFenRef.current = gameState.fen;
     if (!engineWorkerRef.current) return;
 
-    if (isAnalyzing || (inTrainingMode && trainingMode === 'sparring')) {
-      // In sparring mode or analysis mode, run the engine
+    if (isAnalyzing) {
       if (isAnalyzing) setAnalysisData({}); // Clear previous data only if explicit analysis
       engineWorkerRef.current.postMessage('stop'); 
-      isBotThinking.current = false; // Reset waiting flag
 
       engineWorkerRef.current.postMessage(`position fen ${gameState.fen}`);
-      
-      if (inTrainingMode && trainingMode === 'sparring') {
-          // In new Smart Sparring, we prioritize fetchSimulatedHumanMove (in TrainingPanel)
-          // But if that fails, we can fallback to stockfish here by checking bot turn
-          // However, for clean logic, we let TrainingPanel drive the bot move if Human mode.
-          // This block is now mostly for evaluation display during sparring.
-          engineWorkerRef.current.postMessage('go infinite');
-      } else {
-          engineWorkerRef.current.postMessage('go infinite');
-      }
+      engineWorkerRef.current.postMessage('go infinite');
     } else {
       if (!isAnalyzing) {
           engineWorkerRef.current.postMessage('stop');
-          isBotThinking.current = false;
       }
     }
 
-  }, [isAnalyzing, gameState.fen, inTrainingMode, trainingMode]);
+  }, [isAnalyzing, gameState.fen]);
 
   const toggleAnalysis = () => setIsAnalyzing(!isAnalyzing);
 
@@ -948,220 +893,16 @@ function App() {
     setCurrentNode(node);
     setSelectedSquare(null);
     setValidMoves([]);
-
-    // --- TRAINING: Bot Logic (RECALL MODE) ---
-    // REMOVED: Automatic random Bot Logic in recall mode.
-    // The TrainingPanel now orchestrates the sequence accurately using onBotMove props if needed,
-    // or simply by validating user moves against the specific exercise sequence.
-    
-    if (inTrainingMode && trainingMode === 'recall') {
-       // Just reset feedback to waiting if we navigated away manually (though usually TP handles this)
-       // We do NOTHING here, letting TrainingPanel control the flow.
-    }
-  };
-
-  const enterTrainingHub = (mode: TrainingMode = 'recall') => {
-      // If we are already inside a repertoire view, just switch sidebar
-      if (currentRepertoire) {
-          setInTrainingMode(true); 
-          setIsSessionActive(false); // Start at the Hub
-          setIsAnalyzing(false); 
-          setTrainingMode(mode);
-      }
-  };
-  
-  // Handler for starting session from within the Training Hub (when inside a repertoire)
-  const startSession = (mode: TrainingMode, rep?: Repertoire, savedState?: any, settings?: DrillSettings) => {
-      setTrainingMode(mode);
-      setIsSessionActive(true); // Switch to Active Drill
-      if (settings) setDrillSettings(settings);
-
-      if (savedState) {
-          // RESTORE SESSION STATE
-          const newGame = new Chess(savedState.fen);
-          setGame(newGame);
-          // Try to find the node in current tree that matches this FEN to restore navigation context
-          // This is a traversal search
-          const findNode = (n: MoveNode, fen: string): MoveNode | null => {
-              if (n.fen === fen) return n;
-              for (const child of n.children) {
-                  const res = findNode(child, fen);
-                  if (res) return res;
-              }
-              return null;
-          };
-          const restoredNode = findNode(rootNode, savedState.fen);
-          setCurrentNode(restoredNode);
-          if (restoredNode) navigateToNode(restoredNode);
-          else {
-              // If node not found (orphan or root), just set game state
-              // navigateToNode(null) would reset to start, so we manually set game state above
-          }
-          
-      } else {
-          // NEW SESSION
-          if (mode === 'recall') {
-              resetStreak();
-              // Do NOT navigate to root blindly. Let TrainingPanel.tsx handle the sequence generation and initial jump.
-              // We pass control to TrainingPanel.
-              setTrainingFeedback('waiting');
-          } else if (mode === 'sparring' || mode === 'structure') {
-              // For Sparring or Structure, we often want random start.
-              // Logic is handled by TrainingPanel effect if we are at root.
-              // So we just reset to root here.
-              navigateToNode(null);
-              setTrainingFeedback(null);
-          }
-      }
-  }
-
-  // Handler for Dashboard to start training directly
-  const handleStartTrainingSession = (rep: Repertoire, mode: TrainingMode, savedState?: any) => {
-      setCurrentRepertoire(rep); // This triggers loadRepertoireMoves effect
-      setInTrainingMode(true);
-      setTrainingMode(mode);
-      setIsSessionActive(true); // Go straight to drill
-      
-      // Delay setting session state until repertoire loads?
-      // Since loading is async, we might need a ref or state to apply savedState after load.
-      // For simplicity, we assume user starts fresh or we handle restore in TrainingPanel/Hub inside logic
-      // But since we are switching repertoire, we rely on the Effect [currentRepertoire] to load DB moves.
-      // We can use a ref to store "pending session restore"
-      if (savedState) {
-          pendingSessionRef.current = savedState;
-      }
-  };
-  
-  const pendingSessionRef = useRef<any>(null);
-
-  // Effect to apply pending session after repertoire moves are loaded
-  useEffect(() => {
-      if (!loadingRepertoire && rootNode && pendingSessionRef.current) {
-          const state = pendingSessionRef.current;
-          pendingSessionRef.current = null;
-          
-          const newGame = new Chess(state.fen);
-          setGame(newGame);
-          
-          // Helper to find node
-          const findNode = (n: MoveNode, fen: string): MoveNode | null => {
-              // Simple FEN match (ignoring move counters for broader match if needed)
-              if (n.fen.split(' ')[0] === fen.split(' ')[0]) return n;
-              for (const child of n.children) {
-                  const res = findNode(child, fen);
-                  if (res) return res;
-              }
-              return null;
-          };
-          
-          const node = findNode(rootNode, state.fen);
-          setCurrentNode(node);
-          // Update visual board
-          setLastMove(null); // Or infer from history if available
-      }
-  }, [loadingRepertoire, rootNode]);
-
-
-  const exitTraining = () => {
-      setInTrainingMode(false);
-      setIsSessionActive(false);
-      setTrainingMode('recall');
-      if (botMoveTimeoutRef.current) clearTimeout(botMoveTimeoutRef.current);
-      // Return to current node visual state
-      if (currentNode) navigateToNode(currentNode);
-  };
-
-  const toggleTrainingMode = (mode: TrainingMode) => {
-      setTrainingMode(mode);
-      setTrainingFeedback('waiting');
-      if (mode === 'recall') {
-          // Reset to current known node position logic
-          // if (currentNode) navigateToNode(currentNode); 
-          // REMOVED: Don't jump to current node, let Panel reset session
-      }
-  };
-
-  // UPDATED: Accept targetFen to reset board state
-  const retryTrainingPuzzle = (targetFen?: string) => {
-      setTrainingFeedback('waiting');
-      if (targetFen) {
-          try {
-              const newGame = new Chess(targetFen);
-              setGame(newGame);
-              // Reset valid moves and selection to ensure UI is unlocked
-              setValidMoves([]);
-              setSelectedSquare(null);
-              setLastMove(null);
-          } catch(e) {
-              console.error("Failed to restore FEN", e);
-          }
-      }
-  };
-
-  const nextTrainingPuzzle = () => {
-      if (currentNode && currentNode.children.length === 0) {
-          navigateToNode(null);
-      } else {
-          setTrainingFeedback('waiting');
-      }
-  };
-  
-  // Gamification Logic
-  const addXp = (amount: number) => {
-      setUserStats(prev => {
-          const newXp = prev.xp + amount;
-          const level = Math.floor(newXp / 100) + 1;
-          return { ...prev, xp: newXp, level, streak: prev.streak + 1 };
-      });
-  };
-
-  const resetStreak = () => {
-      setUserStats(prev => ({ ...prev, streak: 0 }));
-  };
-
-  const updateSRS = async (node: MoveNode, isCorrect: boolean) => {
-      if (!node.srs) node.srs = { interval: 0, ease: 2.5, repetitions: 0, nextReview: undefined };
-      let { interval, ease, repetitions } = node.srs;
-
-      if (isCorrect) {
-          if (repetitions === 0) interval = 1;
-          else if (repetitions === 1) interval = 6;
-          else interval = Math.ceil(interval * ease);
-          ease = Math.max(1.3, ease + 0.1);
-          repetitions += 1;
-      } else {
-          repetitions = 0;
-          interval = 0; 
-          ease = Math.max(1.3, ease - 0.2);
-      }
-
-      const nextReviewDate = new Date();
-      nextReviewDate.setDate(nextReviewDate.getDate() + interval);
-
-      node.srs = { interval, ease, repetitions, nextReview: nextReviewDate.toISOString() };
-
-      try {
-          await supabase.from('moves').update({
-              next_review_at: nextReviewDate.toISOString(),
-              interval,
-              ease_factor: ease,
-              repetitions,
-              last_result: isCorrect ? 2 : 1
-          }).eq('id', node.id);
-          if (isCorrect) setDueMovesCount(prev => Math.max(0, prev - 1));
-      } catch (err) {
-          console.error("Failed to update SRS", err);
-      }
   };
 
   // --- MOVE HANDLING & SAVING ---
   const onSquareClick = (square: Square) => {
-    // In Recall mode, we generally want to allow clicking unless explicit 'correct' state locks it (or waiting for bot)
-    // But trainingFeedback 'correct' or 'incorrect' prevents moves in the UI to force user interaction (Retry/Next)
-    if (inTrainingMode && trainingMode === 'recall' && (trainingFeedback === 'correct' || trainingFeedback === 'incorrect')) return;
-
-    // In Structure Mode, disable board clicks
-    if (inTrainingMode && trainingMode === 'structure') return;
+    // MODIFIED: If feedback is 'correct', we allow the user to make a new move.
+    // This acts as an implicit "Continue". 
+    // We only block if it's 'completed' or we are waiting for an animation (optional).
+    if (trainingState.active && trainingState.feedback === 'completed') {
+        return; 
+    }
 
     const moveAttempt = validMoves.find(m => m.to === square);
 
@@ -1175,7 +916,12 @@ function App() {
         });
         
         if (result) {
-          handleMove(result);
+          // INTERCEPT for Training
+          if (trainingState.active) {
+              handleTrainingMove(result);
+          } else {
+              handleMove(result);
+          }
           return;
         }
       } catch (e) {
@@ -1184,15 +930,6 @@ function App() {
     }
 
     const piece = game.get(square);
-    if (inTrainingMode && isSessionActive) {
-         // Respect the drill settings if available, otherwise fallback to repertoire color
-         const repColor = currentRepertoire?.color === 'white' ? 'w' : 'b';
-         const drillColor = drillSettings ? (drillSettings.color === 'white' ? 'w' : 'b') : repColor;
-         
-         // In Recall/Drill mode, strict turn order based on assigned color
-         if (game.turn() !== drillColor && trainingMode === 'recall') return;
-         if (game.turn() !== drillColor && trainingMode === 'sparring') return; 
-    }
 
     if (piece && piece.color === game.turn()) {
       setSelectedSquare(square);
@@ -1204,62 +941,184 @@ function App() {
     }
   };
 
+  // --- TRAINING LOGIC ---
+  const countMovesLeft = (node: MoveNode | null, color: Color) => {
+      if (!node) return 0;
+      let count = 0;
+      let temp = node;
+      // Traverse down the main line (index 0)
+      while (temp.children.length > 0) {
+          temp = temp.children[0];
+          // Count only user moves (matching repertoire color)
+          if (temp.color === color) count++;
+      }
+      return count;
+  };
+
+  const startTraining = (repertoire: Repertoire) => {
+      setCurrentRepertoire(repertoire);
+      setViewMode('training-active');
+      
+      const newGame = new Chess();
+      setGame(newGame);
+      setLastMove(null);
+      setValidMoves([]);
+      setSelectedSquare(null);
+      
+      // Calculate total expected moves for session
+      // For simplicity, we calculate from root when data is loaded
+      
+      setTrainingState({
+          active: true,
+          feedback: 'waiting',
+          currentNode: rootNode 
+      });
+
+      setSessionStats({
+          correct: 0,
+          errors: 0,
+          movesLeft: 0 // Will update in useEffect
+      });
+  };
+
+  // Sync Training Node with Root once loaded & Update Moves Left
+  useEffect(() => {
+      if (trainingState.active && rootNode && currentRepertoire) {
+          // Sync Root if needed
+          if (trainingState.currentNode?.id === 'root' && rootNode.children.length > 0) {
+             const movesLeft = countMovesLeft(rootNode, currentRepertoire.color as Color);
+             
+             setTrainingState(prev => ({ ...prev, currentNode: rootNode }));
+             setSessionStats(prev => ({ ...prev, movesLeft }));
+          }
+      }
+  }, [rootNode, trainingState.active, currentRepertoire]);
+
+  const logTrainingResult = async (
+      fen: string, 
+      expected: string, 
+      played: string | null, 
+      isCorrect: boolean,
+      points: number
+  ) => {
+      if (!session?.user || !currentRepertoire) return;
+
+      try {
+          const { error } = await supabase.from('training_logs').insert([{
+              user_id: session.user.id,
+              repertoire_id: currentRepertoire.id,
+              fen: fen,
+              expected_move: expected,
+              played_move: played,
+              is_correct: isCorrect,
+              points_delta: points
+          }]);
+
+          if (error) throw error;
+          fetchUserStats();
+
+      } catch (err) {
+          console.error("Failed to log training result", err);
+      }
+  };
+
+  const handleTrainingMove = (moveResult: Move) => {
+      const currentDrillNode = trainingState.currentNode;
+      if (!currentDrillNode) return;
+
+      // Check if move matches Main Line (child 0)
+      const correctMoveNode = currentDrillNode.children.length > 0 ? currentDrillNode.children[0] : null;
+
+      if (correctMoveNode && moveResult.san === correctMoveNode.san) {
+          // --- CORRECT ---
+          // 1. Update Game & Visuals for User Move
+          const gameAfterUser = new Chess(game.fen());
+          gameAfterUser.move(moveResult);
+          
+          setGame(gameAfterUser);
+          setLastMove({ from: moveResult.from, to: moveResult.to });
+          setSelectedSquare(null);
+          setValidMoves([]);
+
+          // 2. Log & Stats
+          logTrainingResult(currentDrillNode.fen, correctMoveNode.san, moveResult.san, true, 10);
+          setSessionStats(prev => ({
+              ...prev,
+              correct: prev.correct + 1,
+              movesLeft: Math.max(0, prev.movesLeft - 1)
+          }));
+
+          // 3. Handle Opponent Response (Auto-Play)
+          // The correctMoveNode is what the user just played. 
+          // Does IT have children? If so, that's the opponent's move.
+          if (correctMoveNode.children.length > 0) {
+              const opponentNode = correctMoveNode.children[0];
+              
+              // Animate opponent move after short delay
+              setTimeout(() => {
+                  const gameAfterOpponent = new Chess(gameAfterUser.fen());
+                  const oppMove = gameAfterOpponent.move(opponentNode.move); // Execute using internal move data
+                  
+                  if (oppMove) {
+                      setGame(gameAfterOpponent);
+                      setLastMove({ from: oppMove.from, to: oppMove.to });
+                      
+                      // Advance state to opponent node, ready for NEXT user move
+                      setTrainingState({
+                          active: true,
+                          feedback: 'correct', // Keep showing correct feedback (non-blocking)
+                          currentNode: opponentNode 
+                      });
+                  }
+              }, 500); // 500ms delay for natural feel
+
+          } else {
+              // End of Line!
+              setTrainingState({
+                  active: true,
+                  feedback: 'completed',
+                  currentNode: correctMoveNode
+              });
+          }
+
+      } else {
+          // --- INCORRECT ---
+          setTrainingState(prev => ({ ...prev, feedback: 'incorrect' }));
+          
+          const expected = correctMoveNode ? correctMoveNode.san : 'Unknown';
+          logTrainingResult(currentDrillNode.fen, expected, moveResult.san, false, -5);
+          
+          setSessionStats(prev => ({ ...prev, errors: prev.errors + 1 }));
+
+          setTimeout(() => {
+              setTrainingState(prev => ({ ...prev, feedback: 'waiting' }));
+              setSelectedSquare(null);
+              setValidMoves([]);
+          }, 1500);
+      }
+  };
+
+  const handleTrainingContinue = () => {
+      // Manual skip if needed (though auto-play handles most cases now)
+      setTrainingState(prev => ({ ...prev, feedback: 'waiting' }));
+  };
+
+  const handleExitTraining = () => {
+      setTrainingState({ active: false, feedback: 'none', currentNode: null });
+      setViewMode('dashboard');
+      setCurrentRepertoire(null);
+  };
+
+  const handleRestartTraining = () => {
+      if (currentRepertoire) {
+          startTraining(currentRepertoire);
+      }
+  };
+
   const handleMove = async (moveResult: Move) => {
     const parent = currentNode || rootNode;
     
-    // --- SPARRING MODE LOGIC ---
-    if (inTrainingMode && trainingMode === 'sparring') {
-        const tempGame = new Chess(game.fen());
-        tempGame.move(moveResult);
-        setGame(tempGame);
-        setLastMove({ from: moveResult.from, to: moveResult.to });
-        setSelectedSquare(null);
-        setValidMoves([]);
-        // The engine effect or bot logic will trigger because game state changed
-        return;
-    }
-
-    // --- RECALL / DRILL MODE LOGIC ---
     const existingChild = parent.children.find(child => child.san === moveResult.san);
-
-    if (inTrainingMode && trainingMode === 'recall') {
-        
-        // Strict Validation: Move MUST exist in the tree children
-        if (existingChild) {
-            // Correct Move!
-            const tempGame = new Chess(game.fen());
-            tempGame.move(moveResult);
-            setGame(tempGame);
-            setLastMove({ from: moveResult.from, to: moveResult.to });
-            setSelectedSquare(null);
-            setValidMoves([]);
-
-            setTrainingFeedback('correct');
-            addXp(10 + (userStats.streak * 2));
-            updateSRS(existingChild, true);
-            
-            // Update tree state
-            setCurrentNode(existingChild); 
-            
-        } else {
-            // Incorrect Move!
-            setTrainingFeedback('incorrect');
-            resetStreak();
-            
-            // Find expected move for feedback (usually first child, or weighted)
-            const expected = parent.children.length > 0 ? parent.children[0].san : "Unknown";
-            setCorrectTrainingMove(expected);
-            
-            if (parent.children.length > 0) {
-                 updateSRS(parent.children[0], false);
-            }
-            // Do NOT update game state (undo visual move implicitly by not calling setGame)
-            // Just clear selection
-            setSelectedSquare(null);
-            setValidMoves([]);
-        }
-        return;
-    }
 
     // --- EDITOR MODE LOGIC ---
     if (existingChild) {
@@ -1485,15 +1344,27 @@ function App() {
     return <Auth />;
   }
 
-  if (!currentRepertoire) {
+  // --- VIEW MODE: DASHBOARD ---
+  if (viewMode === 'dashboard') {
     return (
         <Dashboard 
-            onSelectRepertoire={setCurrentRepertoire} 
-            onStartTrainingSession={handleStartTrainingSession}
-            onEnterCoachMode={() => {}} // Disabled
-            userStats={userStats} 
+            onSelectRepertoire={(rep) => {
+                setCurrentRepertoire(rep);
+                setViewMode('analysis');
+            }} 
+            onOpenTraining={() => setViewMode('training-hub')}
         />
     );
+  }
+
+  // --- VIEW MODE: TRAINING HUB ---
+  if (viewMode === 'training-hub') {
+      return (
+          <TrainingHub 
+              onStartTraining={startTraining}
+              onBack={() => setViewMode('dashboard')}
+          />
+      );
   }
 
   const bestLine = analysisData[1];
@@ -1534,7 +1405,14 @@ function App() {
       <header className="w-full bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-md">
          <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
             <button 
-              onClick={() => { setCurrentRepertoire(null); setInTrainingMode(false); }}
+              onClick={() => { 
+                  if (trainingState.active) {
+                      handleExitTraining();
+                  } else {
+                      setCurrentRepertoire(null);
+                      setViewMode('dashboard');
+                  }
+              }}
               className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors text-sm font-bold uppercase tracking-wider group"
             >
               <div className="p-1.5 rounded-md bg-slate-800 group-hover:bg-slate-700 transition-colors">
@@ -1544,10 +1422,10 @@ function App() {
             </button>
             
             <div className="flex items-center gap-3">
-               <div className="w-2 h-8 bg-amber-600 rounded-full hidden sm:block"></div>
+               <div className={`w-2 h-8 rounded-full hidden sm:block ${trainingState.active ? 'bg-amber-500 animate-pulse' : 'bg-slate-600'}`}></div>
                <div>
-                  <h1 className="text-slate-200 font-bold text-lg leading-tight truncate max-w-[200px] sm:max-w-md">{currentRepertoire.name}</h1>
-                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">{currentRepertoire.color}</p>
+                  <h1 className="text-slate-200 font-bold text-lg leading-tight truncate max-w-[200px] sm:max-w-md">{currentRepertoire?.name}</h1>
+                  <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">{trainingState.active ? 'Training Mode' : currentRepertoire?.color}</p>
                </div>
             </div>
 
@@ -1584,125 +1462,98 @@ function App() {
              />
            </div>
 
-           {/* COMMENT CARD (Below Board) */}
-           <div className="w-full max-w-[600px] mt-4">
-              <div className="bg-slate-900 border border-slate-800 border-l-4 border-l-amber-500 rounded-lg p-4 shadow-lg relative overflow-hidden group min-h-[120px] flex flex-col transition-all hover:bg-slate-800/50">
-                 <div className="flex items-center justify-between gap-2 mb-2 select-none">
-                    <div className="flex items-center gap-2 text-amber-500/80">
-                        <MessageSquare size={14} />
-                        <span className="text-[10px] font-bold uppercase tracking-wider">Commentary</span>
-                    </div>
-                    {currentNode && currentNode.comment && (
-                        <button 
-                            onClick={() => handleUpdateComment('')}
-                            className="text-slate-600 hover:text-red-400 transition-colors p-1 rounded"
-                            title="Delete Comment"
-                        >
-                            <Trash2 size={12} />
-                        </button>
-                    )}
-                 </div>
-                 
-                 {currentNode ? (
-                    <textarea 
-                       className="w-full bg-transparent border-none text-slate-300 text-sm focus:outline-none resize-none flex-1 placeholder:text-slate-600 leading-relaxed min-h-[60px]"
-                       placeholder="Add notes for this position..."
-                       value={currentNode.comment || ''}
-                       onChange={(e) => handleUpdateComment(e.target.value)}
-                    />
-                 ) : (
-                    <div className="flex items-center justify-center h-full text-slate-600 text-xs italic">
-                       Select a move to add comments.
-                    </div>
-                 )}
-              </div>
-           </div>
+           {/* COMMENT CARD (Only in Analysis Mode) */}
+           {!trainingState.active && (
+               <div className="w-full max-w-[600px] mt-4">
+                  <div className="bg-slate-900 border border-slate-800 border-l-4 border-l-amber-500 rounded-lg p-4 shadow-lg relative overflow-hidden group min-h-[120px] flex flex-col transition-all hover:bg-slate-800/50">
+                     <div className="flex items-center justify-between gap-2 mb-2 select-none">
+                        <div className="flex items-center gap-2 text-amber-500/80">
+                            <MessageSquare size={14} />
+                            <span className="text-[10px] font-bold uppercase tracking-wider">Commentary</span>
+                        </div>
+                        {currentNode && currentNode.comment && (
+                            <button 
+                                onClick={() => handleUpdateComment('')}
+                                className="text-slate-600 hover:text-red-400 transition-colors p-1 rounded"
+                                title="Delete Comment"
+                            >
+                                <Trash2 size={12} />
+                            </button>
+                        )}
+                     </div>
+                     
+                     {currentNode ? (
+                        <textarea 
+                           className="w-full bg-transparent border-none text-slate-300 text-sm focus:outline-none resize-none flex-1 placeholder:text-slate-600 leading-relaxed min-h-[60px]"
+                           placeholder="Add notes for this position..."
+                           value={currentNode.comment || ''}
+                           onChange={(e) => handleUpdateComment(e.target.value)}
+                        />
+                     ) : (
+                        <div className="flex items-center justify-center h-full text-slate-600 text-xs italic">
+                           Select a move to add comments.
+                        </div>
+                     )}
+                  </div>
+               </div>
+           )}
         </div>
 
         {/* Right: Controls Area - ADDED z-30 HERE */}
         <div className="w-full md:w-[450px] flex-shrink-0 flex flex-col h-[600px] md:h-[calc(100vh-140px)] md:sticky md:top-4 z-30">
           
-          {/* LOGIC SWITCHER: Analysis vs Training Hub vs Active Session */}
-          
-          {inTrainingMode ? (
-             <>
-                {isSessionActive ? (
-                   <TrainingPanel 
-                        isTraining={true}
-                        mode={trainingMode}
-                        feedback={trainingFeedback}
-                        correctMoveSan={correctTrainingMove}
-                        onNextPuzzle={nextTrainingPuzzle}
-                        onRetry={retryTrainingPuzzle}
-                        onStopTraining={exitTraining}
-                        onToggleMode={toggleTrainingMode}
-                        dueCount={dueMovesCount}
-                        userStats={userStats}
-                        analysisData={analysisData}
-                        game={game} 
-                        onBotMove={handleBotMove} 
-                        rootNode={rootNode} 
-                        onJumpToNode={navigateToNode} 
-                        currentRepertoire={currentRepertoire}
-                        drillSettings={drillSettings} // PASS SETTINGS
-                        currentNode={currentNode} // PASS CURRENT NODE
-                    />
-                ) : (
-                    <TrainingHub 
-                        isTrainingActive={false}
-                        onStartSession={startSession}
-                        onExit={exitTraining}
-                        userStats={userStats}
-                        dueCount={dueMovesCount}
-                        repertoires={currentRepertoire ? [currentRepertoire] : []} // FIX: Pass current repertoire to auto-select
-                        currentRepertoireId={currentRepertoire.id} // Pass current ID
-                        repertoireColor={currentRepertoire.color}
-                    />
-                )}
-             </>
-          ) : (
-            <ControlPanel 
-                game={game}
-                gameState={gameState}
-                rootNode={rootNode}
-                currentNode={currentNode}
-                onReset={resetGame}
-                onFlip={flipBoard}
-                onCopyFen={copyFen}
-                onNavigate={navigateToNode}
-                onImport={handleImport}
-                onUpdateComment={handleUpdateComment}
-                onDelete={handleDeleteNode}
-                isAnalyzing={isAnalyzing}
-                onToggleAnalysis={toggleAnalysis}
-                analysisData={analysisData}
-                onStartTraining={(mode) => enterTrainingHub(mode)}
-                // Explorer props
-                explorerData={explorerSettings.source === 'masters' ? mastersData : lichessData}
-                mastersData={mastersData}
-                lichessData={lichessData}
-                isExplorerLoading={isExplorerLoading}
-                onExplorerMove={handleExplorerMove}
-                onLoadMasterGame={handleImportMasterGame}
-                onFetchPgn={handleFetchPgn}
-                explorerSettings={explorerSettings}
-                onUpdateExplorerSettings={setExplorerSettings}
-                // Games props
-                onLichessImport={handleLichessImport}
-                importedGames={importedGames}
-                onLoadGame={handleLoadImportedGame}
-                currentMovePath={currentMovePath}
-                onDeleteGames={handleDeleteImportedGames}
-                // Strategy Props
-                pawnStructureMode={pawnStructureMode}
-                onTogglePawnStructure={() => setPawnStructureMode(!pawnStructureMode)}
-                // Viewer Props
-                onViewGame={(meta) => setViewingGameMetadata(meta)}
-                // Library Props
-                currentRepertoire={currentRepertoire}
-                onUpdateRepertoire={handleUpdateRepertoire}
-            />
-          )}
+            {trainingState.active ? (
+                <TrainingPanel 
+                    feedback={trainingState.feedback}
+                    onNext={handleTrainingContinue}
+                    onExit={handleExitTraining}
+                    onRestart={handleRestartTraining}
+                    turnColor={game.turn()}
+                    userStats={userStats}
+                    sessionStats={sessionStats}
+                />
+            ) : (
+                <ControlPanel 
+                    game={game}
+                    gameState={gameState}
+                    rootNode={rootNode}
+                    currentNode={currentNode}
+                    onReset={resetGame}
+                    onFlip={flipBoard}
+                    onCopyFen={copyFen}
+                    onNavigate={navigateToNode}
+                    onImport={handleImport}
+                    onUpdateComment={handleUpdateComment}
+                    onDelete={handleDeleteNode}
+                    isAnalyzing={isAnalyzing}
+                    onToggleAnalysis={toggleAnalysis}
+                    analysisData={analysisData}
+                    // Explorer props
+                    explorerData={explorerSettings.source === 'masters' ? mastersData : lichessData}
+                    mastersData={mastersData}
+                    lichessData={lichessData}
+                    isExplorerLoading={isExplorerLoading}
+                    onExplorerMove={handleExplorerMove}
+                    onLoadMasterGame={handleImportMasterGame}
+                    onFetchPgn={handleFetchPgn}
+                    explorerSettings={explorerSettings}
+                    onUpdateExplorerSettings={setExplorerSettings}
+                    // Games props
+                    onLichessImport={handleLichessImport}
+                    importedGames={importedGames}
+                    onLoadGame={handleLoadImportedGame}
+                    currentMovePath={currentMovePath}
+                    onDeleteGames={handleDeleteImportedGames}
+                    // Strategy Props
+                    pawnStructureMode={pawnStructureMode}
+                    onTogglePawnStructure={() => setPawnStructureMode(!pawnStructureMode)}
+                    // Viewer Props
+                    onViewGame={(meta) => setViewingGameMetadata(meta)}
+                    // Library Props
+                    currentRepertoire={currentRepertoire!}
+                    onUpdateRepertoire={handleUpdateRepertoire}
+                />
+            )}
           
           {notification && (
             <div className="absolute top-[10%] left-1/2 -translate-x-1/2 bg-slate-800 text-amber-400 px-4 py-2 rounded-lg shadow-xl text-sm font-bold border border-slate-700 animate-bounce z-50 whitespace-nowrap">

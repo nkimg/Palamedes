@@ -416,6 +416,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const [importText, setImportText] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [gameToDeleteId, setGameToDeleteId] = useState<string | null>(null);
+  const [videoToDeleteId, setVideoToDeleteId] = useState<string | null>(null);
   const [isGamesListOpen, setIsGamesListOpen] = useState(false);
   const [lichessUsername, setLichessUsername] = useState('');
   const [lichessToken, setLichessToken] = useState('');
@@ -571,12 +572,18 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     }
   };
 
+  // Trigger Confirmation
   const handleDeleteVideo = (videoId: string) => {
-    if (!currentRepertoire || !currentRepertoire.video_gallery) return;
-    if (!confirm("Remove this video from the library?")) return;
+    setVideoToDeleteId(videoId);
+  };
 
-    const updatedGallery = currentRepertoire.video_gallery.filter(v => v.id !== videoId);
+  // Perform Actual Delete
+  const confirmDeleteVideo = () => {
+    if (!currentRepertoire || !currentRepertoire.video_gallery || !videoToDeleteId) return;
+    
+    const updatedGallery = currentRepertoire.video_gallery.filter(v => v.id !== videoToDeleteId);
     onUpdateRepertoire({ ...currentRepertoire, video_gallery: updatedGallery });
+    setVideoToDeleteId(null);
   };
 
   const handleToggleFavorite = (videoId: string) => {
@@ -643,6 +650,14 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
          }}
          title="Delete Game?"
          message="Are you sure you want to remove this game from your library? This action cannot be undone."
+      />
+
+      <ConfirmationModal 
+         isOpen={!!videoToDeleteId}
+         onClose={() => setVideoToDeleteId(null)}
+         onConfirm={confirmDeleteVideo}
+         title="Remove Video?"
+         message="Are you sure you want to remove this video from your library?"
       />
 
       {/* Import Overlay */}

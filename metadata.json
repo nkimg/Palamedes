@@ -1,0 +1,5 @@
+{
+  "name": "IA Repertoire Builder Chess ",
+  "description": "A sleek, dark-mode chess analysis board featuring move validation, history tracking, and FEN export capabilities.",
+  "requestFramePermissions": []
+}

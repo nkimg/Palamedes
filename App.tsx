@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Chess, Square, Move, Color } from 'chess.js';
-import { GameState, BoardOrientation, MoveNode, EngineAnalysis, Repertoire, DbMove, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, PawnStructureAnalysis, UserTrainingStats, TrainingLog, TrainingSessionStats } from './types';
+import { GameState, BoardOrientation, MoveNode, EngineAnalysis, Repertoire, DbMove, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, PawnStructureAnalysis, UserTrainingStats, TrainingLog, TrainingSessionStats, VisualMode, EngineSettings } from './types';
 import Board from './components/Board';
 import ControlPanel from './components/ControlPanel';
 import TrainingPanel from './components/TrainingPanel';
@@ -118,6 +118,7 @@ const GameViewerModal: React.FC<{ metadata: GameMetadata; onClose: () => void }>
                  inCheck={game.inCheck()} 
                  bestMove={null} 
                  winChance={null}
+                 visualMode="default"
                />
              </div>
           </div>
@@ -221,6 +222,7 @@ function App() {
   // --- ANALYSIS STATE ---
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisData, setAnalysisData] = useState<Record<number, EngineAnalysis>>({});
+  const [engineSettings, setEngineSettings] = useState<EngineSettings>({ multiPv: 3 });
   const engineWorkerRef = useRef<Worker | null>(null);
   const latestFenRef = useRef(game.fen());
 
@@ -275,8 +277,37 @@ function App() {
   const [currentNode, setCurrentNode] = useState<MoveNode | null>(null);
   const commentTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // --- STRATEGY STATE ---
-  const [pawnStructureMode, setPawnStructureMode] = useState(false);
+  // --- STRATEGY / VISUAL STATE ---
+  const [visualMode, setVisualMode] = useState<VisualMode>('default');
+
+  // --- DERIVED STATE ---
+  const [gameState, setGameState] = useState<GameState>({
+    fen: game.fen(),
+    turn: game.turn(),
+    inCheck: game.inCheck(),
+    inCheckmate: game.isCheckmate(),
+    inDraw: game.isDraw(),
+    isGameOver: game.isGameOver(),
+    hasHistory: rootNode.children.length > 0,
+  });
+
+  const updateGameState = useCallback(() => {
+    const currentFen = game.fen();
+    setGameState({
+      fen: currentFen,
+      turn: game.turn(),
+      inCheck: game.inCheck(),
+      inCheckmate: game.isCheckmate(),
+      inDraw: game.isDraw(),
+      isGameOver: game.isGameOver(),
+      hasHistory: rootNode.children.length > 0,
+    });
+    latestFenRef.current = currentFen;
+  }, [game, rootNode]);
+
+  useEffect(() => {
+    updateGameState();
+  }, [game, updateGameState]);
 
   // --- AUTH INITIALIZATION ---
   useEffect(() => {
@@ -325,7 +356,8 @@ function App() {
         const worker = new Worker(blobUrl);
         
         worker.postMessage('uci');
-        worker.postMessage('setoption name MultiPV value 3');
+        // Initial Config
+        worker.postMessage(`setoption name MultiPV value ${engineSettings.multiPv}`);
         
         worker.onmessage = (e) => {
           const msg = e.data;
@@ -349,6 +381,19 @@ function App() {
       }
     };
   }, []);
+
+  // Effect to update engine settings when state changes
+  useEffect(() => {
+      if (engineWorkerRef.current) {
+          engineWorkerRef.current.postMessage(`setoption name MultiPV value ${engineSettings.multiPv}`);
+          // Restart analysis if active
+          if (isAnalyzing) {
+              engineWorkerRef.current.postMessage('stop');
+              engineWorkerRef.current.postMessage(`position fen ${gameState.fen}`);
+              engineWorkerRef.current.postMessage('go infinite');
+          }
+      }
+  }, [engineSettings, isAnalyzing, gameState.fen]);
 
   const parseEngineOutput = (line: string) => {
       // Example: info depth 18 seldepth 26 multipv 1 score cp 32 ... pv e2e4 c7c5
@@ -566,35 +611,6 @@ function App() {
         }
     });
   };
-
-  // --- DERIVED STATE ---
-  const [gameState, setGameState] = useState<GameState>({
-    fen: game.fen(),
-    turn: game.turn(),
-    inCheck: game.inCheck(),
-    inCheckmate: game.isCheckmate(),
-    inDraw: game.isDraw(),
-    isGameOver: game.isGameOver(),
-    hasHistory: rootNode.children.length > 0,
-  });
-
-  const updateGameState = useCallback(() => {
-    const currentFen = game.fen();
-    setGameState({
-      fen: currentFen,
-      turn: game.turn(),
-      inCheck: game.inCheck(),
-      inCheckmate: game.isCheckmate(),
-      inDraw: game.isDraw(),
-      isGameOver: game.isGameOver(),
-      hasHistory: rootNode.children.length > 0,
-    });
-    latestFenRef.current = currentFen;
-  }, [game, rootNode]);
-
-  useEffect(() => {
-    updateGameState();
-  }, [game, updateGameState]);
 
   // --- EXPLORER DATA FETCHING (PARALLEL) ---
   useEffect(() => {
@@ -1460,7 +1476,7 @@ function App() {
                inCheck={gameState.inCheck}
                bestMove={isAnalyzing && bestLine?.from && bestLine?.to ? { from: bestLine.from, to: bestLine.to } : null}
                winChance={isAnalyzing && bestLine?.winChance !== undefined ? bestLine.winChance : null}
-               pawnStructureMode={pawnStructureMode}
+               visualMode={visualMode}
              />
            </div>
 
@@ -1530,6 +1546,9 @@ function App() {
                     isAnalyzing={isAnalyzing}
                     onToggleAnalysis={toggleAnalysis}
                     analysisData={analysisData}
+                    // Engine Settings
+                    engineSettings={engineSettings}
+                    onUpdateEngineSettings={setEngineSettings}
                     // Explorer props
                     explorerData={explorerSettings.source === 'masters' ? mastersData : lichessData}
                     mastersData={mastersData}
@@ -1546,9 +1565,9 @@ function App() {
                     onLoadGame={handleLoadImportedGame}
                     currentMovePath={currentMovePath}
                     onDeleteGames={handleDeleteImportedGames}
-                    // Strategy Props
-                    pawnStructureMode={pawnStructureMode}
-                    onTogglePawnStructure={() => setPawnStructureMode(!pawnStructureMode)}
+                    // Strategy Props (Visual Mode)
+                    visualMode={visualMode}
+                    onSetVisualMode={setVisualMode}
                     // Viewer Props
                     onViewGame={(meta) => setViewingGameMetadata(meta)}
                     // Library Props

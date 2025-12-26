@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { 
   RotateCcw, Copy, Repeat, AlertTriangle, 
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, 
-  Import, MessageSquare, Cpu, Activity, Trash2, GitBranch, CornerDownRight, BookOpen, Database, Search, X, Play, Pause, ChevronDown, PlayCircle, Layers, CheckSquare, Square, Download, ExternalLink, Video, Plus, Star, LayoutList, AlignLeft, Grid3X3, Split, Calendar, Paperclip, Loader2, Lightbulb, Book, ShieldCheck
+  Import, MessageSquare, Cpu, Activity, Trash2, GitBranch, CornerDownRight, BookOpen, Database, Search, X, Play, Pause, ChevronDown, PlayCircle, Layers, CheckSquare, Square, Download, ExternalLink, Video, Plus, Star, LayoutList, AlignLeft, Grid3X3, Split, Calendar, Paperclip, Loader2, Lightbulb, Book, ShieldCheck, EyeOff, Target, BarChart, Shield, Settings
 } from 'lucide-react';
-import { GameState, MoveNode, EngineAnalysis, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, PawnStructureAnalysis, Repertoire, VideoMetadata } from '../types';
+import { GameState, MoveNode, EngineAnalysis, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, PawnStructureAnalysis, Repertoire, VideoMetadata, VisualMode, EngineSettings } from '../types';
 import { Chess, Move } from 'chess.js';
 import OpeningExplorer from './OpeningExplorer';
 import Board from './Board'; 
@@ -26,6 +26,10 @@ interface ControlPanelProps {
   onToggleAnalysis: () => void;
   analysisData: Record<number, EngineAnalysis>;
   
+  // Engine Config
+  engineSettings: EngineSettings;
+  onUpdateEngineSettings: (settings: EngineSettings) => void;
+
   // Explorer Props
   explorerData: ExplorerData | null;
   mastersData: ExplorerData | null;
@@ -45,8 +49,8 @@ interface ControlPanelProps {
   onDeleteGames: (ids: string[]) => void;
 
   // Visual Props
-  pawnStructureMode: boolean;
-  onTogglePawnStructure: () => void;
+  visualMode: VisualMode;
+  onSetVisualMode: (mode: VisualMode) => void;
 
   // Viewer Props (New)
   onViewGame: (metadata: GameMetadata) => void;
@@ -57,9 +61,7 @@ interface ControlPanelProps {
 }
 
 // ... (KEEP EXISTING MODALS AND HELPER COMPONENTS - ConfirmationModal, VideoPlayerModal, MoveTreeRenderer, MoveSheetRecursive, MoveCardRenderer) ...
-// Note: To save space, I will just provide the modified ControlPanel functional component content below, assuming the helpers above it remain unchanged as they are utility components within the file. 
-// However, standard protocol is to provide full file content. 
-// I will include the full file content to be safe and correct.
+// NOTE: I am ensuring the import of 'Shield' above in 'lucide-react' to fix the reported error.
 
 // --- CONFIRMATION MODAL ---
 const ConfirmationModal: React.FC<{
@@ -394,6 +396,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   isAnalyzing,
   onToggleAnalysis,
   analysisData,
+  engineSettings,
+  onUpdateEngineSettings,
   explorerData,
   mastersData,
   lichessData,
@@ -408,14 +412,15 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   explorerSettings,
   onUpdateExplorerSettings,
   onDeleteGames,
-  pawnStructureMode,
-  onTogglePawnStructure,
+  visualMode,
+  onSetVisualMode,
   onViewGame,
   currentRepertoire,
   onUpdateRepertoire
 }) => {
   const historyRef = useRef<HTMLDivElement>(null);
   const [showImport, setShowImport] = useState(false);
+  const [showEngineSettings, setShowEngineSettings] = useState(false);
   const [importText, setImportText] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [gameToDeleteId, setGameToDeleteId] = useState<string | null>(null);
@@ -493,10 +498,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'strategy' || pawnStructureMode) {
+    if (activeTab === 'strategy' || visualMode !== 'default') {
         setStrategyReport(analyzeStructure(gameState.fen));
     }
-  }, [gameState.fen, activeTab, pawnStructureMode]);
+  }, [gameState.fen, activeTab, visualMode]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -627,6 +632,23 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       return currentRepertoire.video_gallery;
   }, [currentRepertoire, showFavoritesOnly]);
 
+  const VisualModeButton = ({ mode, icon: Icon, label }: { mode: VisualMode, icon: any, label: string }) => (
+      <button
+          onClick={() => onSetVisualMode(visualMode === mode ? 'default' : mode)}
+          className={`
+              flex flex-col items-center justify-center p-3 rounded-lg border transition-all text-xs font-bold gap-2 h-full
+              ${visualMode === mode 
+                  ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-900/40 ring-1 ring-indigo-400' 
+                  : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+              }
+          `}
+          title={label}
+      >
+          <Icon size={20} className={visualMode === mode ? 'animate-pulse' : ''} />
+          <span className="text-[10px] text-center leading-tight">{label}</span>
+      </button>
+  );
+
   return (
     <div className="flex flex-col h-full bg-slate-900 rounded-xl shadow-xl overflow-hidden border border-slate-800 relative">
       
@@ -686,14 +708,59 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         </div>
       )}
 
-      {/* Header */}
-      <div className="p-3 bg-slate-800 border-b border-slate-700 flex items-center justify-between shrink-0">
+      {/* Header with Engine Settings */}
+      <div className="p-3 bg-slate-800 border-b border-slate-700 flex items-center justify-between shrink-0 relative">
         <div className={`font-semibold text-sm flex items-center gap-2 text-slate-200 truncate max-w-[150px]`}>
           <div className={`w-2 h-2 rounded-full ${gameState.turn === 'w' ? 'bg-slate-200' : 'bg-slate-900 border border-slate-500'}`}></div>
-          {gameState.turn === 'w' ? "White's Turn" : "Black's Turn"}
+          {gameState.turn === 'w' ? "White" : "Black"}
         </div>
+        
         <div className="flex gap-2">
-           <button onClick={onToggleAnalysis} className={`text-xs flex items-center gap-1 px-2 py-1 rounded transition-colors border ${isAnalyzing ? 'bg-green-900/50 border-green-700 text-green-400' : 'bg-slate-700 border-transparent text-slate-300 hover:bg-slate-600'}`}><Cpu size={14} className={isAnalyzing ? 'animate-pulse' : ''} /><span className="hidden sm:inline">Engine</span></button>
+           <div className="relative">
+               <button 
+                  onClick={() => setShowEngineSettings(!showEngineSettings)}
+                  className={`text-xs flex items-center gap-1 px-2 py-1 rounded transition-colors border ${isAnalyzing ? 'bg-green-900/50 border-green-700 text-green-400' : 'bg-slate-700 border-transparent text-slate-300 hover:bg-slate-600'}`}
+               >
+                   <Cpu size={14} className={isAnalyzing ? 'animate-pulse' : ''} />
+                   <span className="hidden sm:inline">Stockfish 10 (WASM)</span>
+                   <Settings size={10} className="ml-1 opacity-50" />
+               </button>
+
+               {/* Engine Settings Popover */}
+               {showEngineSettings && (
+                   <div className="absolute top-full right-0 mt-2 w-48 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 p-3 animate-in fade-in slide-in-from-top-2">
+                       <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
+                           <Settings size={12} /> Engine Config
+                       </h4>
+                       <div className="space-y-3">
+                           <div>
+                               <label className="text-[10px] text-slate-400 uppercase font-bold block mb-1">MultiPV (Lines)</label>
+                               <div className="flex gap-1">
+                                   {[1, 3, 5].map(n => (
+                                       <button 
+                                          key={n}
+                                          onClick={() => {
+                                              onUpdateEngineSettings({ ...engineSettings, multiPv: n });
+                                              setShowEngineSettings(false);
+                                          }}
+                                          className={`flex-1 py-1 text-xs font-bold rounded border ${engineSettings.multiPv === n ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}`}
+                                       >
+                                           {n}
+                                       </button>
+                                   ))}
+                               </div>
+                           </div>
+                           <button 
+                              onClick={onToggleAnalysis}
+                              className={`w-full py-1.5 text-xs font-bold rounded flex items-center justify-center gap-1 ${isAnalyzing ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-green-900/30 text-green-400 hover:bg-green-900/50'}`}
+                           >
+                               {isAnalyzing ? 'Stop Engine' : 'Start Engine'}
+                           </button>
+                       </div>
+                   </div>
+               )}
+           </div>
+
            <button onClick={() => setShowImport(true)} className="text-xs flex items-center gap-1 bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded transition-colors"><Import size={12} /> <span className="hidden sm:inline">Import</span></button>
         </div>
       </div>
@@ -1103,21 +1170,23 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         {/* --- STRATEGY TAB --- */}
         {activeTab === 'strategy' && (
             <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                {/* Toggle Visual Mode */}
-                <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 flex justify-between items-center shadow-md">
-                    <div>
-                        <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2">
-                            <Layers size={16} className="text-indigo-400" />
-                            Pawn Skeleton View
-                        </h3>
-                        <p className="text-[10px] text-slate-500 font-medium mt-0.5">Isolate pawn structure for clarity.</p>
-                    </div>
-                    <button 
-                        onClick={onTogglePawnStructure}
-                        className={`relative w-12 h-6 rounded-full transition-colors ${pawnStructureMode ? 'bg-indigo-600 shadow-[0_0_10px_rgba(79,70,229,0.4)]' : 'bg-slate-700'}`}
-                    >
-                        <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white transition-transform ${pawnStructureMode ? 'translate-x-6' : 'translate-x-0'}`} />
-                    </button>
+                
+                {/* Visual Mode Toolbar */}
+                <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-md">
+                     <h3 className="font-bold text-slate-200 text-sm flex items-center gap-2 mb-3">
+                        <EyeOff size={16} className="text-indigo-400" />
+                        Board Visualization
+                     </h3>
+                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 h-20">
+                         <VisualModeButton mode="pawn-structure" icon={Layers} label="Pawn Skeleton" />
+                         <VisualModeButton mode="no-minors" icon={Shield} label="No Minors" />
+                         <VisualModeButton mode="no-bishops" icon={EyeOff} label="No Bishops" />
+                         <VisualModeButton mode="control" icon={Target} label="Space Control" />
+                         <VisualModeButton mode="files" icon={BarChart} label="Open Files" />
+                     </div>
+                     <p className="text-[10px] text-slate-500 mt-2 text-center">
+                         Select a mode to filter the board view and highlight structural elements.
+                     </p>
                 </div>
 
                 {/* Analysis Report */}

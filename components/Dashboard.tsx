@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { Repertoire } from '../types';
-import { Plus, BookOpen, Trash2, LogOut, Layout, Library as LibraryIcon, X, ArrowRight, ArrowLeft, Settings, Info, GraduationCap, PenTool, Search, Filter, Target, Swords, User, Brain, GitBranch, CornerDownRight, FolderOpen, Folder } from 'lucide-react';
+import { Plus, BookOpen, Trash2, LogOut, Layout, Library as LibraryIcon, X, ArrowRight, ArrowLeft, Settings, Info, GraduationCap, PenTool, Search, Filter, Target, Swords, User, Brain } from 'lucide-react';
 import OpeningLibrary from './OpeningLibrary';
 import PreparationCenter from './PreparationCenter';
 import PersonalityProfile from './PersonalityProfile';
@@ -246,11 +246,7 @@ const OpeningPreviewModal: React.FC<{
 const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onOpenTraining }) => {
   const [repertoires, setRepertoires] = useState<Repertoire[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  // Creation States
   const [isCreating, setIsCreating] = useState(false);
-  const [creatingSideLineFor, setCreatingSideLineFor] = useState<Repertoire | null>(null);
-  
   const [newRepName, setNewRepName] = useState('');
   const [newRepColor, setNewRepColor] = useState<'white' | 'black'>('white');
   const [userEmail, setUserEmail] = useState<string | undefined>('');
@@ -292,16 +288,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onOpenTrainin
       const user = (await supabase.auth.getUser()).data.user;
       if (!user) return;
 
-      const payload = {
-          user_id: user.id,
-          name: newRepName,
-          color: creatingSideLineFor ? creatingSideLineFor.color : newRepColor, // Inherit color if sideline
-          parent_id: creatingSideLineFor ? creatingSideLineFor.id : null
-      };
-
       const { data, error } = await supabase
         .from('repertoires')
-        .insert([payload])
+        .insert([{
+          user_id: user.id,
+          name: newRepName,
+          color: newRepColor
+        }])
         .select()
         .single();
 
@@ -309,11 +302,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onOpenTrainin
 
       setRepertoires([data, ...repertoires]);
       setIsCreating(false);
-      setCreatingSideLineFor(null);
       setNewRepName('');
     } catch (error) {
       console.error('Error creating repertoire:', error);
-      alert('Failed to create. Make sure you have run the database migration to add "parent_id".');
     }
   };
 
@@ -383,28 +374,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onOpenTrainin
 
   const deleteRepertoire = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!window.confirm('Are you sure? This will delete this repertoire and ALL of its side lines.')) return;
+    if (!window.confirm('Are you sure? This will delete all moves in this repertoire.')) return;
 
     try {
-      // Optimistically update UI to remove parent and all its children
-      // Assuming cascade delete is set up in DB, or manual delete
       const { error } = await supabase.from('repertoires').delete().eq('id', id);
       if (error) throw error;
-      
-      // Remove the deleted ID and any repertoire that had this ID as parent
-      setRepertoires(prev => prev.filter(r => r.id !== id && r.parent_id !== id));
-
+      setRepertoires(repertoires.filter(r => r.id !== id));
     } catch (error) {
       console.error('Error deleting repertoire:', error);
-      alert('Failed to delete. Check console.');
     }
   };
 
   const handleSignOut = () => supabase.auth.signOut();
-
-  // Logic to separate Parents and Children
-  const rootRepertoires = useMemo(() => repertoires.filter(r => !r.parent_id), [repertoires]);
-  const getSideLines = (parentId: string) => repertoires.filter(r => r.parent_id === parentId);
 
   // If in Preparation Mode
   if (activeTab === 'preparation') {
@@ -523,7 +504,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onOpenTrainin
                     <div className="flex justify-between items-center mb-8">
                         <h2 className="text-2xl font-bold text-white">Your Repertoires</h2>
                         <button 
-                            onClick={() => { setIsCreating(true); setCreatingSideLineFor(null); }}
+                            onClick={() => setIsCreating(true)}
                             className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm shadow-lg transition-colors"
                         >
                             <Plus size={16} /> New Repertoire
@@ -531,41 +512,33 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onOpenTrainin
                     </div>
 
                     {isCreating && (
-                        <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl mb-8 animate-in fade-in slide-in-from-top-2 shadow-xl ring-1 ring-amber-500/30">
-                            <h3 className="font-bold text-white mb-4 flex items-center gap-2">
-                                {creatingSideLineFor ? <GitBranch size={18} className="text-indigo-400"/> : <FolderOpen size={18} className="text-amber-500"/>}
-                                {creatingSideLineFor ? `Add Side Line to "${creatingSideLineFor.name}"` : 'Create New Repertoire'}
-                            </h3>
+                        <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl mb-8 animate-in fade-in slide-in-from-top-2 shadow-xl">
+                            <h3 className="font-bold text-white mb-4">Create Repertoire</h3>
                             <div className="flex flex-col md:flex-row gap-4">
                                 <input 
                                     type="text" 
-                                    placeholder={creatingSideLineFor ? "Variation Name (e.g., Zukertort)" : "Repertoire Name (e.g., White - Sicilian)"}
+                                    placeholder="Repertoire Name (e.g., White - Sicilian)" 
                                     className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-sm focus:border-amber-500 outline-none text-white"
                                     value={newRepName}
                                     onChange={(e) => setNewRepName(e.target.value)}
-                                    autoFocus
                                 />
-                                {!creatingSideLineFor && (
-                                    <div className="flex gap-2">
-                                        <button 
-                                            onClick={() => setNewRepColor('white')}
-                                            className={`px-4 py-2 rounded-lg text-sm font-bold border ${newRepColor === 'white' ? 'bg-slate-200 text-slate-900 border-slate-200' : 'bg-transparent text-slate-400 border-slate-700 hover:border-slate-500'}`}
-                                        >White</button>
-                                        <button 
-                                            onClick={() => setNewRepColor('black')}
-                                            className={`px-4 py-2 rounded-lg text-sm font-bold border ${newRepColor === 'black' ? 'bg-slate-800 text-white border-black' : 'bg-transparent text-slate-400 border-slate-700 hover:border-slate-500'}`}
-                                        >Black</button>
-                                    </div>
-                                )}
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setNewRepColor('white')}
+                                        className={`px-4 py-2 rounded-lg text-sm font-bold border ${newRepColor === 'white' ? 'bg-slate-200 text-slate-900 border-slate-200' : 'bg-transparent text-slate-400 border-slate-700 hover:border-slate-500'}`}
+                                    >White</button>
+                                    <button 
+                                        onClick={() => setNewRepColor('black')}
+                                        className={`px-4 py-2 rounded-lg text-sm font-bold border ${newRepColor === 'black' ? 'bg-slate-800 text-white border-black' : 'bg-transparent text-slate-400 border-slate-700 hover:border-slate-500'}`}
+                                    >Black</button>
+                                </div>
                                 <button 
                                     onClick={createRepertoire}
                                     disabled={!newRepName.trim()}
                                     className="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {creatingSideLineFor ? 'Add Line' : 'Create'}
-                                </button>
+                                >Create</button>
                                 <button 
-                                    onClick={() => { setIsCreating(false); setCreatingSideLineFor(null); }}
+                                    onClick={() => setIsCreating(false)}
                                     className="px-4 py-2 text-slate-400 hover:text-white"
                                 >Cancel</button>
                             </div>
@@ -575,88 +548,34 @@ const Dashboard: React.FC<DashboardProps> = ({ onSelectRepertoire, onOpenTrainin
                     {loading ? (
                         <div className="text-center text-slate-500 py-12">Loading repertoires...</div>
                     ) : (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            {rootRepertoires.map(rep => {
-                                const sideLines = getSideLines(rep.id);
-                                return (
-                                    <div 
-                                        key={rep.id}
-                                        className="group bg-slate-900 border border-slate-800 rounded-xl transition-all relative overflow-hidden shadow-lg hover:border-slate-600 flex flex-col"
-                                    >
-                                        {/* Main Card Content */}
-                                        <div 
-                                            onClick={() => onSelectRepertoire(rep)}
-                                            className="p-5 cursor-pointer relative z-10 hover:bg-slate-800/50 transition-colors"
-                                        >
-                                            <div className={`absolute top-0 left-0 w-1 h-full ${rep.color === 'white' ? 'bg-slate-200' : 'bg-slate-950 border-r border-slate-800'}`} />
-                                            <div className="flex justify-between items-start pl-3">
-                                                <div className="flex items-start gap-4">
-                                                    <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-amber-600 shadow-inner">
-                                                        <Folder size={28} />
-                                                    </div>
-                                                    <div>
-                                                        <h3 className="font-bold text-lg text-slate-200 group-hover:text-amber-500 transition-colors">{rep.name}</h3>
-                                                        <div className="flex gap-2 text-xs text-slate-500 mt-1 uppercase tracking-wider font-bold">
-                                                            <span>{rep.color}</span> • <span>Main Line</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <button 
-                                                    onClick={(e) => deleteRepertoire(e, rep.id)}
-                                                    className="p-2 text-slate-600 hover:text-red-500 hover:bg-red-900/10 rounded-lg transition-colors z-10"
-                                                    title="Delete Repertoire & Side Lines"
-                                                >
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        {/* Side Lines Section */}
-                                        <div className="bg-slate-950/50 border-t border-slate-800 p-4 flex-1 flex flex-col gap-2">
-                                            {sideLines.length > 0 && (
-                                                <div className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-1">
-                                                    <GitBranch size={10} /> Side Lines & Variations
-                                                </div>
-                                            )}
-                                            
-                                            <div className="grid grid-cols-1 gap-2">
-                                                {sideLines.map(side => (
-                                                    <div 
-                                                        key={side.id}
-                                                        onClick={() => onSelectRepertoire(side)}
-                                                        className="flex items-center justify-between p-2 rounded-lg bg-slate-900 border border-slate-800 hover:border-indigo-500/50 cursor-pointer hover:bg-slate-800 transition-all group/side"
-                                                    >
-                                                        <div className="flex items-center gap-2">
-                                                            <CornerDownRight size={14} className="text-slate-600" />
-                                                            <span className="text-sm font-medium text-slate-300 group-hover/side:text-indigo-300">{side.name}</span>
-                                                        </div>
-                                                        <button 
-                                                            onClick={(e) => deleteRepertoire(e, side.id)}
-                                                            className="p-1 text-slate-600 hover:text-red-400 opacity-0 group-hover/side:opacity-100 transition-opacity"
-                                                        >
-                                                            <X size={12} />
-                                                        </button>
-                                                    </div>
-                                                ))}
-                                            </div>
-
-                                            {/* Add Side Line Button */}
-                                            <button 
-                                                onClick={() => {
-                                                    setIsCreating(true);
-                                                    setCreatingSideLineFor(rep);
-                                                    setNewRepName('');
-                                                    // Scroll to top to see form
-                                                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                                                }}
-                                                className="mt-2 w-full py-2 rounded-lg border border-dashed border-slate-700 text-slate-500 hover:text-indigo-400 hover:border-indigo-500/50 hover:bg-indigo-900/10 text-xs font-bold transition-all flex items-center justify-center gap-1"
-                                            >
-                                                <Plus size={12} /> Add Side Line
-                                            </button>
-                                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {repertoires.map(rep => (
+                                <div 
+                                    key={rep.id}
+                                    onClick={() => onSelectRepertoire(rep)}
+                                    className="group bg-slate-900 border border-slate-800 hover:border-amber-600/50 rounded-xl cursor-pointer transition-all hover:shadow-lg relative overflow-hidden flex"
+                                >
+                                    {/* Updated Visual Highlight Section - Now wider and distinct */}
+                                    <div className={`w-24 sm:w-28 flex items-center justify-center shrink-0 ${rep.color === 'white' ? 'bg-gradient-to-br from-slate-200 to-slate-400 text-slate-900' : 'bg-gradient-to-br from-slate-950 to-slate-800 text-slate-200 border-r border-slate-700'}`}>
+                                        <BookOpen size={32} className="opacity-80" />
                                     </div>
-                                );
-                            })}
+                                    
+                                    <div className="p-5 flex-1 flex justify-between items-start">
+                                        <div>
+                                            <h3 className="font-bold text-lg text-slate-200 group-hover:text-amber-500 transition-colors">{rep.name}</h3>
+                                            <div className="flex gap-2 text-xs text-slate-500 mt-1 uppercase tracking-wider font-bold">
+                                                <span>{rep.color}</span> • <span>{new Date(rep.created_at).toLocaleDateString()}</span>
+                                            </div>
+                                        </div>
+                                        <button 
+                                            onClick={(e) => deleteRepertoire(e, rep.id)}
+                                            className="p-2 text-slate-600 hover:text-red-500 hover:bg-red-900/10 rounded-lg transition-colors z-10"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
 
                             {repertoires.length === 0 && !loading && (
                                 <div className="col-span-full text-center py-12 border border-dashed border-slate-800 rounded-xl text-slate-500">

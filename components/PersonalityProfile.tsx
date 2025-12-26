@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { analyzeOpponentStats, TimeControlFilter } from '../lichessClient';
 import { generatePersonalityProfile } from '../geminiService';
-import { PersonalityProfile as ProfileType, StoredPersonalityProfile } from '../types';
-import { User, Brain, Book, Swords, Zap, Shield, Target, Award, Loader2, RefreshCw, Clock, Flame, Rabbit, Hourglass } from 'lucide-react';
+import { PersonalityProfile as ProfileType } from '../types';
+import { User, Brain, Book, Swords, Zap, Target, Award, RefreshCw, Clock, Flame, Rabbit, Hourglass, Database, Save } from 'lucide-react';
 
 const PersonalityProfile: React.FC = () => {
     const [username, setUsername] = useState('');
@@ -11,12 +11,12 @@ const PersonalityProfile: React.FC = () => {
     const [profile, setProfile] = useState<ProfileType | null>(null);
     const [progress, setProgress] = useState(0);
     const [status, setStatus] = useState('');
-    const [gameCount, setGameCount] = useState<number>(500); 
+    const [gameCount, setGameCount] = useState<number>(200); 
     
     // Filters & Persistence
     const [activeTimeControl, setActiveTimeControl] = useState<TimeControlFilter>('blitz');
-    const [dbProfileId, setDbProfileId] = useState<string | null>(null);
     const [lastFetchTime, setLastFetchTime] = useState<string | null>(null);
+    const [isDbData, setIsDbData] = useState(false);
 
     // Initial Load: Try to get current user name if saved
     useEffect(() => {
@@ -32,6 +32,7 @@ const PersonalityProfile: React.FC = () => {
             loadProfileFromDb(username, activeTimeControl);
         } else {
             setProfile(null);
+            setLastFetchTime(null);
         }
     }, [username, activeTimeControl]);
 
@@ -40,7 +41,7 @@ const PersonalityProfile: React.FC = () => {
             const { data: authUser } = await supabase.auth.getUser();
             if (!authUser.user) return;
 
-            const { data, error } = await supabase
+            const { data } = await supabase
                 .from('personality_profiles')
                 .select('*')
                 .eq('user_id', authUser.user.id)
@@ -50,26 +51,28 @@ const PersonalityProfile: React.FC = () => {
 
             if (data) {
                 setProfile(data.profile_data);
-                setDbProfileId(data.id);
                 setLastFetchTime(data.created_at);
+                setIsDbData(true);
             } else {
                 setProfile(null);
-                setDbProfileId(null);
                 setLastFetchTime(null);
+                setIsDbData(false);
             }
         } catch (e) {
             console.error("Error loading DB profile", e);
         }
     };
 
-    const handleAnalyze = async () => {
+    const handleAnalyze = async (forceRefresh = false) => {
         if (!username.trim()) return;
         
         // Save username preference
         localStorage.setItem('lichess_username', username);
 
         setLoading(true);
-        setProfile(null);
+        // Only clear profile if we are NOT refreshing (visual continuity)
+        if (!forceRefresh) setProfile(null);
+        
         setProgress(0);
         setStatus(`Fetching ${activeTimeControl} games...`);
 
@@ -99,23 +102,22 @@ const PersonalityProfile: React.FC = () => {
             // 3. Save to DB (Upsert)
             const { data: authUser } = await supabase.auth.getUser();
             if (authUser.user) {
+                const now = new Date().toISOString();
                 const payload = {
                     user_id: authUser.user.id,
                     target_username: username,
                     time_control: activeTimeControl,
                     profile_data: aiProfile,
-                    created_at: new Date().toISOString()
+                    created_at: now
                 };
 
-                const { data, error } = await supabase
+                const { error } = await supabase
                     .from('personality_profiles')
-                    .upsert(payload, { onConflict: 'user_id,target_username,time_control' })
-                    .select()
-                    .single();
+                    .upsert(payload, { onConflict: 'user_id,target_username,time_control' });
                 
-                if (data) {
-                    setDbProfileId(data.id);
-                    setLastFetchTime(data.created_at);
+                if (!error) {
+                    setLastFetchTime(now);
+                    setIsDbData(true); // Now it's effectively DB data
                 }
             }
 
@@ -211,17 +213,30 @@ const PersonalityProfile: React.FC = () => {
                                 </div>
                             </div>
                         ) : profile ? (
-                            <div className="w-full text-center">
-                                <div className="text-xs text-emerald-400 font-mono mb-4 flex items-center justify-center gap-2">
-                                    <RefreshCw size={12} />
-                                    Profile Loaded: {lastFetchTime ? new Date(lastFetchTime).toLocaleString() : 'Just now'}
+                            <div className="w-full flex flex-col items-center">
+                                {/* Metadata Badge */}
+                                <div className="inline-flex items-center gap-4 bg-slate-950 border border-slate-800 rounded-full px-5 py-2 mb-4 shadow-sm">
+                                    {isDbData && (
+                                        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-emerald-400 tracking-wider">
+                                            <Database size={12} /> Persisted
+                                        </div>
+                                    )}
+                                    <div className="w-[1px] h-4 bg-slate-800"></div>
+                                    <div className="text-[10px] text-slate-500 font-mono">
+                                        Last Updated: {lastFetchTime ? new Date(lastFetchTime).toLocaleString() : 'Just now'}
+                                    </div>
                                 </div>
+
+                                {/* Main Action: Reload */}
                                 <button 
-                                    onClick={handleAnalyze}
-                                    className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold border border-slate-700 transition-colors inline-flex items-center gap-2"
+                                    onClick={() => handleAnalyze(true)}
+                                    className="group relative px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold shadow-lg shadow-indigo-900/20 transition-all flex items-center gap-2 overflow-hidden"
                                 >
-                                    <RefreshCw size={14} /> Refresh {activeTimeControl} Analysis
+                                    <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+                                    <RefreshCw size={16} className="group-hover:rotate-180 transition-transform duration-500" />
+                                    <span>Update Analysis</span>
                                 </button>
+                                <p className="text-[10px] text-slate-500 mt-2">Fetches new games and regenerates profile</p>
                             </div>
                         ) : (
                             <div className="text-center py-4">
@@ -229,7 +244,7 @@ const PersonalityProfile: React.FC = () => {
                                     No saved personality for <strong>{activeTimeControl}</strong>. Click below to analyze your recent {gameCount} games.
                                 </div>
                                 <button 
-                                    onClick={handleAnalyze}
+                                    onClick={() => handleAnalyze(false)}
                                     disabled={!username.trim()}
                                     className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-lg shadow-lg flex items-center gap-2 mx-auto transition-transform active:scale-[0.98]"
                                 >

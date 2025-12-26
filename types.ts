@@ -1,6 +1,7 @@
 import { Square, Move, PieceSymbol, Color } from 'chess.js';
 
 export type BoardOrientation = 'white' | 'black';
+export type VisualMode = 'default' | 'pawn-structure' | 'no-minors' | 'no-bishops' | 'control' | 'files';
 
 export interface VideoMetadata {
   id: string;
@@ -18,7 +19,6 @@ export interface Repertoire {
   color: 'white' | 'black';
   created_at: string;
   video_gallery?: VideoMetadata[];
-  parent_id?: string | null; // Supports grouping variations under a main opening
 }
 
 export interface Dossier {
@@ -130,6 +130,10 @@ export interface PieceProps {
 export interface HighlightedSquare {
   square: Square;
   isCapture: boolean;
+}
+
+export interface EngineSettings {
+    multiPv: number; // Number of lines to analyze (1-5)
 }
 
 export interface EngineAnalysis {

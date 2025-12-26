@@ -23,6 +23,7 @@ const Auth = () => {
         if (error) throw error;
         setMessage({ text: 'Check your email for the confirmation link!', type: 'success' });
       } else {
+        // Default persistence (LocalStorage) is handled by supabaseClient initialization.
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password,

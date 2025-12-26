@@ -602,7 +602,31 @@ const TrainingHub: React.FC<TrainingHubProps> = ({
                                             </button>
                                         </div>
                                     </div>
-                                    
+
+                                    {/* REGIME 3: UNDERSTANDING (STRUCTURE) */}
+                                    <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden shadow-lg group hover:border-emerald-500/50 transition-colors">
+                                        <div className="p-4 border-b border-slate-800 bg-gradient-to-r from-slate-900 to-emerald-950/30 flex justify-between items-center">
+                                            <div>
+                                                <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                                                    <Lightbulb size={20} className="text-emerald-400" /> Deliberate Practice
+                                                </h3>
+                                                <p className="text-xs text-slate-400 mt-1">Identify plans and structures from your games.</p>
+                                            </div>
+                                            <div className="bg-emerald-900/20 px-3 py-1 rounded-full border border-emerald-500/30">
+                                                <span className="text-[10px] text-emerald-300 font-bold uppercase flex items-center gap-1">
+                                                    <Layers size={10} /> Ideas & Plans
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="p-4 bg-slate-900/50">
+                                            <button 
+                                                onClick={() => onStartSession('structure', selectedRep)}
+                                                className="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-all border border-slate-600 hover:border-slate-500"
+                                            >
+                                                <Grid size={16} /> Structure Quiz
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
 

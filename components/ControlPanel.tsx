@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { 
   RotateCcw, Copy, Repeat, Trophy, AlertTriangle, 
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, 
-  Import, MessageSquare, Cpu, Activity, Trash2, GitBranch, CornerDownRight, Brain, BookOpen, Database, Search, FileText, X, Play, Pause, ChevronDown, PlayCircle, Layers, CheckSquare, Square, Swords, Download, ExternalLink, TrendingUp, User, Globe, Loader2, Lightbulb, ShieldAlert, ShieldCheck, Book, Library, Calendar, Paperclip, Settings, Zap, LayoutList, AlignLeft, Grid3X3, Split
+  Import, MessageSquare, Cpu, Activity, Trash2, GitBranch, CornerDownRight, Brain, BookOpen, Database, Search, FileText, X, Play, Pause, ChevronDown, PlayCircle, Layers, CheckSquare, Square, Swords, Download, ExternalLink, TrendingUp, User, Globe, Loader2, Lightbulb, ShieldAlert, ShieldCheck, Book, Library, Calendar, Paperclip, Settings, Zap, LayoutList, AlignLeft, Grid3X3, Split, Video, Plus, Star
 } from 'lucide-react';
-import { GameState, MoveNode, EngineAnalysis, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, TrainingMode, PawnStructureAnalysis } from '../types';
+import { GameState, MoveNode, EngineAnalysis, ExplorerData, ImportedGame, GameMetadata, ExplorerSettings, TrainingMode, PawnStructureAnalysis, Repertoire, VideoMetadata } from '../types';
 import { Chess, Move } from 'chess.js';
 import OpeningExplorer from './OpeningExplorer';
 import Board from './Board'; 
@@ -51,6 +51,10 @@ interface ControlPanelProps {
 
   // Viewer Props (New)
   onViewGame: (metadata: GameMetadata) => void;
+
+  // Video Library Props
+  currentRepertoire: Repertoire | null;
+  onUpdateRepertoire: (rep: Repertoire) => void;
 }
 
 // --- CONFIRMATION MODAL ---
@@ -90,6 +94,61 @@ const ConfirmationModal: React.FC<{
                     >
                         <Trash2 size={16} /> Confirm Delete
                     </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- VIDEO MODAL ---
+const VideoPlayerModal: React.FC<{ video: VideoMetadata; onClose: () => void }> = ({ video, onClose }) => {
+    // Adding origin to fix Error 153 (configuration error for some embedded videos)
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const src = `https://www.youtube.com/embed/${video.id}?autoplay=1&origin=${origin}`;
+
+    return (
+        <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4 animate-in fade-in duration-300">
+            <div className="w-full max-w-4xl relative">
+                <button 
+                    onClick={onClose}
+                    className="absolute -top-10 right-0 text-slate-400 hover:text-white transition-colors"
+                >
+                    <X size={24} />
+                </button>
+                <div className="relative pt-[56.25%] bg-black rounded-xl overflow-hidden shadow-2xl border border-slate-800">
+                    <iframe 
+                        className="absolute inset-0 w-full h-full"
+                        src={src}
+                        title={video.title}
+                        frameBorder="0" 
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                        allowFullScreen
+                    ></iframe>
+                </div>
+                
+                <div className="mt-4 flex flex-col items-center text-center gap-3">
+                    <h3 className="text-xl font-bold text-white">{video.title}</h3>
+
+                    {/* AdBlock / Error 153 Warning */}
+                    <div className="bg-amber-950/40 border border-amber-500/30 rounded-lg p-3 flex flex-col sm:flex-row items-center gap-3 text-left max-w-2xl w-full">
+                        <div className="p-2 bg-amber-900/30 rounded-full shrink-0">
+                             <AlertTriangle className="text-amber-500" size={20} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-amber-200 uppercase mb-0.5">Erro de Reprodução (153)?</p>
+                            <p className="text-xs text-amber-100/70 leading-relaxed">
+                                Se o vídeo não carregar, é provável que seu <strong>AdBlock</strong> esteja bloqueando o player. Desative-o para este site ou assista no YouTube.
+                            </p>
+                        </div>
+                        <a 
+                            href={video.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap shadow-md shrink-0"
+                        >
+                            Ver no YouTube <ExternalLink size={14} />
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -348,7 +407,9 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onDeleteGames,
   pawnStructureMode,
   onTogglePawnStructure,
-  onViewGame
+  onViewGame,
+  currentRepertoire,
+  onUpdateRepertoire
 }) => {
   const historyRef = useRef<HTMLDivElement>(null);
   const [showImport, setShowImport] = useState(false);
@@ -360,10 +421,16 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const [lichessToken, setLichessToken] = useState('');
   const [importCount, setImportCount] = useState(10);
   const [importMode, setImportMode] = useState<'text' | 'lichess'>('text');
-  const [activeTab, setActiveTab] = useState<'moves' | 'explorer' | 'strategy'>('moves');
+  const [activeTab, setActiveTab] = useState<'moves' | 'explorer' | 'strategy' | 'videos'>('moves');
   const [strategyReport, setStrategyReport] = useState<PawnStructureAnalysis | null>(null);
   
   const [movesViewMode, setMovesViewMode] = useState<'tree' | 'sheet' | 'cards'>('tree');
+  
+  // Video State
+  const [videoUrl, setVideoUrl] = useState('');
+  const [addingVideo, setAddingVideo] = useState(false);
+  const [playVideo, setPlayVideo] = useState<VideoMetadata | null>(null);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
   const latestAnalysisRef = useRef(analysisData);
   useEffect(() => { latestAnalysisRef.current = analysisData; }, [analysisData]);
@@ -377,7 +444,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   }, [importedGames]);
 
   // --- UPDATED PATH LOGIC FOR CARDS ---
-  // Calculates path from Root -> Current -> Future Main Line
   const linearMovePath = useMemo(() => {
       // 1. History (Root to Current)
       const history: MoveNode[] = [];
@@ -389,14 +455,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
 
       // 2. Future (Current's Main Line Children)
       const future: MoveNode[] = [];
-      // If we are at a node, look at its children. If at start (null), look at root's children.
       let next = currentNode 
           ? (currentNode.children.length > 0 ? currentNode.children[0] : null)
           : (rootNode.children.length > 0 ? rootNode.children[0] : null);
 
       while (next) {
           future.push(next);
-          // Always follow the main line (index 0) for the linear view preview
           if (next.children.length > 0) {
               next = next.children[0];
           } else {
@@ -407,15 +471,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       return [...history, ...future];
   }, [currentNode, rootNode]);
 
-  // Auto-scroll
   useEffect(() => {
       if (currentNode && historyRef.current) {
           const idPrefix = movesViewMode === 'cards' ? 'card-node-' : (movesViewMode === 'sheet' ? 'sheet-node-' : 'node-');
           const el = document.getElementById(`${idPrefix}${currentNode.id}`);
           if (el) {
               el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          } else {
-              // If not found (maybe first render or weird state), try scrolling to active element logic
           }
       }
   }, [currentNode, movesViewMode]);
@@ -457,6 +518,75 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     }
   };
 
+  const extractYoutubeId = (url: string) => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+  };
+
+  const handleAddVideo = async () => {
+    if (!videoUrl || !currentRepertoire) return;
+    setAddingVideo(true);
+
+    const videoId = extractYoutubeId(videoUrl);
+    if (!videoId) {
+        alert("Invalid YouTube URL");
+        setAddingVideo(false);
+        return;
+    }
+
+    try {
+        // Fetch metadata using noembed (No API Key required)
+        const response = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`);
+        const data = await response.json();
+        
+        if (!data.title) throw new Error("Could not fetch video metadata");
+
+        const newVideo: VideoMetadata = {
+            id: videoId,
+            title: data.title,
+            thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+            url: `https://www.youtube.com/watch?v=${videoId}`,
+            isFavorite: false
+        };
+
+        const currentGallery = currentRepertoire.video_gallery || [];
+        // Prevent duplicates
+        if (currentGallery.some(v => v.id === videoId)) {
+            alert("Video already exists in library");
+            setAddingVideo(false);
+            setVideoUrl('');
+            return;
+        }
+
+        const updatedGallery = [newVideo, ...currentGallery];
+        onUpdateRepertoire({ ...currentRepertoire, video_gallery: updatedGallery });
+        setVideoUrl('');
+
+    } catch (e) {
+        console.error("Video add error", e);
+        alert("Failed to add video. Please check the URL.");
+    } finally {
+        setAddingVideo(false);
+    }
+  };
+
+  const handleDeleteVideo = (videoId: string) => {
+    if (!currentRepertoire || !currentRepertoire.video_gallery) return;
+    if (!confirm("Remove this video from the library?")) return;
+
+    const updatedGallery = currentRepertoire.video_gallery.filter(v => v.id !== videoId);
+    onUpdateRepertoire({ ...currentRepertoire, video_gallery: updatedGallery });
+  };
+
+  const handleToggleFavorite = (videoId: string) => {
+      if (!currentRepertoire?.video_gallery) return;
+      const updatedGallery = currentRepertoire.video_gallery.map(v => 
+          v.id === videoId ? { ...v, isFavorite: !v.isFavorite } : v
+      );
+      onUpdateRepertoire({ ...currentRepertoire, video_gallery: updatedGallery });
+  };
+
   // Logic Variables
   const startNodes = rootNode.children;
   // Moves from current position:
@@ -480,9 +610,20 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const mainLineMove = currentChildren.length > 0 ? currentChildren[0] : null;
   const variationMoves = currentChildren.length > 1 ? currentChildren.slice(1) : [];
 
+  // Filtered Videos Logic
+  const filteredVideos = useMemo(() => {
+      if (!currentRepertoire?.video_gallery) return [];
+      if (showFavoritesOnly) return currentRepertoire.video_gallery.filter(v => v.isFavorite);
+      return currentRepertoire.video_gallery;
+  }, [currentRepertoire, showFavoritesOnly]);
+
   return (
     <div className="flex flex-col h-full bg-slate-900 rounded-xl shadow-xl overflow-hidden border border-slate-800 relative">
       
+      {playVideo && (
+          <VideoPlayerModal video={playVideo} onClose={() => setPlayVideo(null)} />
+      )}
+
       <ConfirmationModal 
          isOpen={showDeleteConfirm}
          onClose={() => setShowDeleteConfirm(false)}
@@ -560,6 +701,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       {/* Tabs */}
       <div className="flex border-b border-slate-800 bg-slate-900/50 shrink-0 overflow-x-auto no-scrollbar">
         <button onClick={() => setActiveTab('moves')} className={`flex-1 min-w-[70px] py-2 text-xs font-bold uppercase tracking-wide border-b-2 transition-colors ${activeTab === 'moves' ? 'border-amber-600 text-slate-200' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Moves</button>
+        <button onClick={() => setActiveTab('videos')} className={`flex-1 min-w-[70px] py-2 text-xs font-bold uppercase tracking-wide border-b-2 transition-colors flex items-center justify-center gap-2 ${activeTab === 'videos' ? 'border-amber-600 text-slate-200' : 'border-transparent text-slate-500 hover:text-slate-400'}`}><Video size={12} /> Library</button>
         <button onClick={() => setActiveTab('explorer')} className={`flex-1 min-w-[70px] py-2 text-xs font-bold uppercase tracking-wide border-b-2 transition-colors flex items-center justify-center gap-2 ${activeTab === 'explorer' ? 'border-amber-600 text-slate-200' : 'border-transparent text-slate-500 hover:text-slate-400'}`}><BookOpen size={12} /> Explorer</button>
         <button onClick={() => setActiveTab('strategy')} className={`flex-1 min-w-[70px] py-2 text-xs font-bold uppercase tracking-wide border-b-2 transition-colors flex items-center justify-center gap-2 ${activeTab === 'strategy' ? 'border-amber-600 text-slate-200' : 'border-transparent text-slate-500 hover:text-slate-400'}`}><Lightbulb size={12} /> Strategy</button>
       </div>
@@ -815,6 +957,118 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
                 )}
              </div>
           </div>
+        )}
+
+        {/* --- VIDEO LIBRARY TAB --- */}
+        {activeTab === 'videos' && (
+            <div className="flex flex-col h-full overflow-hidden">
+                {/* Add Video Section */}
+                <div className="p-4 bg-slate-900/80 border-b border-slate-800">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase mb-2 block">Add to Library</label>
+                    <div className="flex gap-2">
+                        <div className="relative flex-1">
+                            <Video className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
+                            <input 
+                                type="text"
+                                placeholder="Paste YouTube URL..."
+                                value={videoUrl}
+                                onChange={(e) => setVideoUrl(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg py-2 pl-9 pr-3 text-xs text-white focus:border-amber-500 outline-none"
+                            />
+                        </div>
+                        <button 
+                            onClick={handleAddVideo}
+                            disabled={!videoUrl || addingVideo}
+                            className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1 disabled:opacity-50 transition-colors"
+                        >
+                            {addingVideo ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
+                        </button>
+                    </div>
+
+                    {/* Filter Bar */}
+                    <div className="mt-3 flex items-center justify-between">
+                        <button 
+                            onClick={() => setShowFavoritesOnly(!showFavoritesOnly)}
+                            className={`text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors border ${showFavoritesOnly ? 'bg-yellow-900/30 border-yellow-500/50 text-yellow-400' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'}`}
+                        >
+                            <Star size={12} className={showFavoritesOnly ? 'fill-current' : ''} /> 
+                            {showFavoritesOnly ? 'Favorites Only' : 'Show All'}
+                        </button>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                            {filteredVideos.length} Video{filteredVideos.length !== 1 ? 's' : ''}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Video Grid */}
+                <div className="flex-1 overflow-y-auto p-4 bg-slate-950/50">
+                    {!currentRepertoire?.video_gallery || currentRepertoire.video_gallery.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
+                            <Video size={48} className="mb-2" />
+                            <span className="text-sm">No videos in this repertoire.</span>
+                            <span className="text-xs mt-1">Paste a YouTube link above to start.</span>
+                        </div>
+                    ) : filteredVideos.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
+                            <Star size={48} className="mb-2" />
+                            <span className="text-sm">No favorite videos found.</span>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {filteredVideos.map(video => (
+                                <div key={video.id} className="group bg-slate-900 border border-slate-800 hover:border-amber-600/50 rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-all relative">
+                                    <div 
+                                        className="relative aspect-video cursor-pointer"
+                                        onClick={() => setPlayVideo(video)}
+                                    >
+                                        <img src={video.thumbnail} alt={video.title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/0 transition-colors">
+                                            <div className="w-10 h-10 bg-black/50 backdrop-blur-sm rounded-full flex items-center justify-center border border-white/20 group-hover:scale-110 transition-transform">
+                                                <Play size={20} className="text-white fill-current ml-0.5" />
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Favorite Toggle Overlay */}
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); handleToggleFavorite(video.id); }}
+                                            className="absolute top-2 right-2 p-1.5 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-sm text-slate-300 hover:text-yellow-400 transition-colors z-20"
+                                            title={video.isFavorite ? "Unfavorite" : "Favorite"}
+                                        >
+                                            <Star size={14} className={video.isFavorite ? "fill-yellow-400 text-yellow-400" : ""} />
+                                        </button>
+                                    </div>
+                                    <div className="p-3 relative">
+                                        <h4 className="text-xs font-bold text-slate-200 line-clamp-2 leading-tight mb-2 group-hover:text-amber-500 transition-colors pr-6">
+                                            {video.title}
+                                        </h4>
+                                        <div className="flex justify-between items-center relative z-10">
+                                            <a 
+                                                href={video.url} 
+                                                target="_blank" 
+                                                rel="noopener noreferrer"
+                                                className="text-[10px] text-slate-500 hover:text-white flex items-center gap-1"
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                Open <ExternalLink size={10} />
+                                            </a>
+                                            <button 
+                                                onClick={(e) => { 
+                                                    e.stopPropagation(); 
+                                                    handleDeleteVideo(video.id); 
+                                                }}
+                                                className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-900/10 rounded transition-colors z-20"
+                                                title="Remove Video"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
         )}
 
         {activeTab === 'explorer' && (

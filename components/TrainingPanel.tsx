@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Brain, CheckCircle, XCircle, FastForward, RotateCcw, Calendar, TrendingUp, Swords, RotateCw, Shield, Zap, Activity, User, PauseCircle, RefreshCw, GitBranch, ArrowRight, Play, List, Crosshair, Shuffle, Trophy } from 'lucide-react';
+import { Brain, CheckCircle, XCircle, FastForward, RotateCcw, Calendar, TrendingUp, Swords, RotateCw, Shield, Zap, Lightbulb, HelpCircle, Activity, User, PauseCircle, RefreshCw, GitBranch, ArrowRight, Play, List, Crosshair, Shuffle, Trophy } from 'lucide-react';
 import { TrainingMode, UserStats, EngineAnalysis, MoveNode, Repertoire, TrainingExercise, TrainingSequenceStep, DrillSettings } from '../types';
 import { fetchSimulatedHumanMove } from '../lichessClient';
+import { analyzeStructure } from '../strategy';
 import { Chess } from 'chess.js';
 
 interface TrainingPanelProps {

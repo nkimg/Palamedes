@@ -2,6 +2,14 @@ import { Square, Move, PieceSymbol, Color } from 'chess.js';
 
 export type BoardOrientation = 'white' | 'black';
 
+export interface VideoMetadata {
+  id: string;
+  title: string;
+  thumbnail: string;
+  url: string;
+  isFavorite: boolean;
+}
+
 // Database Entities
 export interface Repertoire {
   id: string;
@@ -9,6 +17,7 @@ export interface Repertoire {
   name: string;
   color: 'white' | 'black';
   created_at: string;
+  video_gallery?: VideoMetadata[]; // New field for video library
 }
 
 export interface DbMove {
@@ -172,7 +181,7 @@ export interface ExplorerSettings {
 }
 
 // Training Specific Types
-export type TrainingMode = 'recall' | 'sparring';
+export type TrainingMode = 'recall' | 'sparring' | 'structure';
 
 export interface UserStats {
     xp: number;

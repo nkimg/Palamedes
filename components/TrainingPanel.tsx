@@ -139,7 +139,7 @@ const TrainingPanel: React.FC<TrainingPanelProps> = ({ feedback, onNext, onExit,
 
                         <div className="flex w-full gap-3">
                             <button onClick={onExit} className="flex-1 py-3 rounded-lg border border-slate-700 text-slate-300 font-bold hover:bg-slate-800 transition-colors">
-                                Dashboard
+                                Training Center
                             </button>
                             <button onClick={onRestart} className="flex-1 py-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold flex items-center justify-center gap-2 shadow-lg transition-transform active:scale-[0.98]">
                                 <RotateCcw size={16} /> Restart

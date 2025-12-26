@@ -1105,7 +1105,7 @@ function App() {
 
   const handleExitTraining = () => {
       setTrainingState({ active: false, feedback: 'none', currentNode: null });
-      setViewMode('dashboard');
+      setViewMode('training-hub'); // Navigate back to Training Hub
       setCurrentRepertoire(null);
   };
 
@@ -1418,7 +1418,9 @@ function App() {
               <div className="p-1.5 rounded-md bg-slate-800 group-hover:bg-slate-700 transition-colors">
                  <ArrowLeft size={16} />
               </div>
-              <span className="hidden sm:inline">Back to Dashboard</span>
+              <span className="hidden sm:inline">
+                 {trainingState.active ? 'Back to Training Center' : 'Back to Dashboard'}
+              </span>
             </button>
             
             <div className="flex items-center gap-3">

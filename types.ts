@@ -18,6 +18,17 @@ export interface Repertoire {
   color: 'white' | 'black';
   created_at: string;
   video_gallery?: VideoMetadata[];
+  parent_id?: string | null; // Supports grouping variations under a main opening
+}
+
+export interface Dossier {
+    id: string;
+    user_id: string;
+    opponent_username: string;
+    status: 'active' | 'archived';
+    stats: OpponentStats;
+    report: string; // Markdown content from Gemini
+    created_at: string;
 }
 
 export interface DbMove {
@@ -215,4 +226,38 @@ export interface OpponentStats {
       winRate: number;
   }[];
   playStyle: string;
+}
+
+// --- Personality Profile Types ---
+export interface PersonalityProfile {
+    archetype: string; 
+    description: string;
+    similarGM: {
+        name: string;
+        description: string;
+    };
+    traits: {
+        aggression: number; // 0-100
+        calculation: number; // 0-100
+        creativity: number; // 0-100
+        endgame: number; // 0-100
+    };
+    recommendedBooks: {
+        title: string;
+        author: string;
+        reason: string;
+    }[];
+    suggestedOpenings: {
+        name: string;
+        reason: string;
+    }[];
+}
+
+export interface StoredPersonalityProfile {
+    id: string;
+    user_id: string;
+    target_username: string;
+    time_control: string;
+    profile_data: PersonalityProfile;
+    created_at: string;
 }

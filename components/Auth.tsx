@@ -43,9 +43,9 @@ const Auth = () => {
           <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-4 border border-slate-700">
             <ShieldCheck size={32} className="text-amber-500" />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Palamedes</h1>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Seshat Chess</h1>
           <p className="text-slate-400 text-xs mt-2 text-center uppercase tracking-widest font-bold">
-            Cognition-Driven Preparation
+            The Archive of Chess Thought
           </p>
         </div>
 

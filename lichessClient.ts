@@ -5,6 +5,8 @@ const LICHESS_API = 'https://explorer.lichess.ovh/lichess';
 const MASTER_GAME_API = 'https://explorer.lichess.ovh/master/pgn';
 const USER_GAMES_API = 'https://lichess.org/api/games/user';
 
+export type TimeControlFilter = 'blitz' | 'rapid' | 'classical' | 'bullet' | 'all';
+
 export const fetchOpeningStats = async (fen: string, settings: ExplorerSettings): Promise<ExplorerData | null> => {
   try {
     let url = '';
@@ -36,35 +38,6 @@ export const fetchOpeningStats = async (fen: string, settings: ExplorerSettings)
   }
 };
 
-// --- SIMULATED HUMAN OPPONENT ---
-// Fetches moves from Lichess DB (2000+) and picks one based on frequency
-export const fetchSimulatedHumanMove = async (fen: string): Promise<string | null> => {
-    // Target 2000, 2200, 2500 for "Serious Amateur" simulation
-    const settings: ExplorerSettings = {
-        source: 'lichess',
-        speeds: ['blitz', 'rapid', 'classical'],
-        ratings: [2000, 2200, 2500]
-    };
-
-    const data = await fetchOpeningStats(fen, settings);
-    if (!data || !data.moves || data.moves.length === 0) return null;
-
-    // Weighted random selection based on game count
-    const moves = data.moves;
-    const totalGames = moves.reduce((sum, m) => sum + (m.white + m.black + m.draws), 0);
-    
-    let r = Math.random() * totalGames;
-    for (const move of moves) {
-        const count = move.white + move.black + move.draws;
-        if (r < count) {
-            return move.san;
-        }
-        r -= count;
-    }
-    
-    return moves[0].san; // Fallback to most popular
-};
-
 export const fetchMasterGame = async (gameId: string): Promise<string | null> => {
   if (!gameId || gameId === 'undefined') {
       console.error("fetchMasterGame called with undefined ID");
@@ -78,16 +51,12 @@ export const fetchMasterGame = async (gameId: string): Promise<string | null> =>
         return await masterRes.text();
     }
   } catch (e) {
-    // Continue to fallback if network error occurs on master API
     console.warn("Masters API unreachable, trying fallback...");
   }
 
   // 2. Fallback to Lichess API (for Community games)
   try {
-    // Uses simple GET request (no custom headers) to avoid CORS preflight issues
-    // Lichess defaults to PGN text response
     const lichessRes = await fetch(`https://lichess.org/game/export/${gameId}?clocks=false&evals=false&literate=true`);
-    
     if (lichessRes.ok) {
         return await lichessRes.text();
     }
@@ -95,45 +64,120 @@ export const fetchMasterGame = async (gameId: string): Promise<string | null> =>
     console.error("Lichess API Fallback Error:", e);
   }
 
-  console.warn(`Failed to fetch game ${gameId} from both Masters and Lichess.`);
   return null;
 };
 
+// Modified to return PGN string but utilizing streaming internally if needed in future
+// Kept simple for import compatibility
 export const fetchUserGames = async (username: string, max: number = 50, token?: string): Promise<string | null> => {
-  try {
-    // Removed 'Accept' header to avoid CORS Preflight (OPTIONS) request which often fails
-    const headers: HeadersInit = {};
-
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    try {
+        return await fetchGamesStreamed(username, max, 'all', () => {});
+    } catch (error) {
+        console.error("Lichess Games Error:", error);
+        throw error;
     }
-
-    const response = await fetch(`${USER_GAMES_API}/${username}?max=${max}&tags=true&clocks=false&evals=false&opening=true`, {
-      headers
-    });
-
-    if (!response.ok) {
-        if (response.status === 401) throw new Error("Invalid API Token");
-        if (response.status === 429) throw new Error("Rate Limit Reached (Wait a minute)");
-        throw new Error("Failed to fetch games");
-    }
-
-    const pgn = await response.text();
-    return pgn;
-  } catch (error) {
-    console.error("Lichess Games Error:", error);
-    throw error;
-  }
 };
 
-// New function to analyze opponent
-export const analyzeOpponentStats = async (username: string): Promise<OpponentStats | null> => {
+/**
+ * Advanced Fetch with Streaming support for large datasets and Progress Bars.
+ * Lichess returns NDJSON (Newline Delimited JSON) for multiple games.
+ */
+const fetchGamesStreamed = async (
+    username: string, 
+    max: number | 'all', 
+    perfType: TimeControlFilter,
+    onProgress: (count: number) => void
+): Promise<string> => {
+    const headers: HeadersInit = {
+        'Accept': 'application/x-ndjson'
+    };
+    
+    // Construct URL
+    let url = `${USER_GAMES_API}/${username}?tags=true&clocks=false&evals=false&opening=true`;
+    
+    if (max !== 'all') {
+        url += `&max=${max}`;
+    }
+    
+    if (perfType !== 'all') {
+        url += `&perfType=${perfType}`;
+    }
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+        if (response.status === 404) throw new Error("User not found");
+        if (response.status === 429) throw new Error("Rate limit reached. Please wait.");
+        throw new Error(`Lichess API Error: ${response.statusText}`);
+    }
+
+    if (!response.body) throw new Error("No response body");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let receivedGamesCount = 0;
+    let pgnAccumulator = "";
+    let buffer = "";
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        
+        // Process all complete lines
+        buffer = lines.pop() || ""; // Keep the last partial line in buffer
+
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+                const gameJson = JSON.parse(line);
+                // Convert JSON back to PGN format manually for compatibility with parser
+                // or just accumulate moves if we only need stats.
+                // For this app, we reconstruct a basic PGN string.
+                
+                const white = gameJson.players.white.user?.name || "Unknown";
+                const black = gameJson.players.black.user?.name || "Unknown";
+                const result = gameJson.winner === 'white' ? '1-0' : (gameJson.winner === 'black' ? '0-1' : '1/2-1/2');
+                const date = gameJson.createdAt ? new Date(gameJson.createdAt).toLocaleDateString().replace(/\//g, '.') : "????.??.??";
+                const opening = gameJson.opening?.name || "Unknown Opening";
+                const moves = gameJson.moves || "";
+
+                const pgnEntry = `[Event "Lichess Game"]\n[Date "${date}"]\n[White "${white}"]\n[Black "${black}"]\n[Result "${result}"]\n[Opening "${opening}"]\n\n${moves} ${result}\n\n`;
+                
+                pgnAccumulator += pgnEntry;
+                receivedGamesCount++;
+                
+                // Throttle progress updates to UI
+                if (receivedGamesCount % 10 === 0) {
+                    onProgress(receivedGamesCount);
+                }
+            } catch (e) {
+                // Ignore parse errors for single lines
+            }
+        }
+    }
+    
+    onProgress(receivedGamesCount); // Final update
+    return pgnAccumulator;
+};
+
+export const analyzeOpponentStats = async (
+    username: string, 
+    limit: number | 'all',
+    perfType: TimeControlFilter,
+    onProgress: (count: number) => void
+): Promise<OpponentStats | null> => {
     try {
-        // CHANGED: Increased from 20 to 100 for better sample size
-        const pgnData = await fetchUserGames(username, 100); 
+        const pgnData = await fetchGamesStreamed(username, limit, perfType, onProgress);
+        
         if (!pgnData) return null;
 
         const games = pgnData.split('[Event "').filter(g => g.trim().length > 0);
+        
+        if (games.length === 0) return null;
+
         const openingCounts: Record<string, { count: number, wins: number }> = {};
         let totalWins = 0;
 
@@ -143,18 +187,16 @@ export const analyzeOpponentStats = async (username: string): Promise<OpponentSt
             const resultMatch = fullPgn.match(/\[Result "(.*?)"\]/);
             const whiteMatch = fullPgn.match(/\[White "(.*?)"\]/);
 
-            // Determine if user won
             const isWhite = whiteMatch && whiteMatch[1].toLowerCase() === username.toLowerCase();
             const result = resultMatch ? resultMatch[1] : '*';
             let userWon = false;
+            
             if (isWhite && result === '1-0') userWon = true;
             if (!isWhite && result === '0-1') userWon = true;
 
             if (userWon) totalWins++;
 
-            // Simplify opening name (e.g. "Sicilian Defense: Najdorf" -> "Sicilian Defense")
             let opening = openingMatch ? openingMatch[1].split(':')[0] : 'Unknown';
-            // Further simplify
             if (opening.includes(',')) opening = opening.split(',')[0];
 
             if (!openingCounts[opening]) openingCounts[opening] = { count: 0, wins: 0 };
@@ -169,10 +211,9 @@ export const analyzeOpponentStats = async (username: string): Promise<OpponentSt
                 winRate: Math.round((data.wins / data.count) * 100)
             }))
             .sort((a, b) => b.count - a.count)
-            .slice(0, 5);
+            .slice(0, 10); // Analyze top 10
 
-        // Simple heuristic for style
-        const playStyle = topOpenings.some(o => o.name.includes('Gambit') || o.name.includes('Sicilian')) 
+        const playStyle = topOpenings.some(o => o.name.includes('Gambit') || o.name.includes('Sicilian') || o.name.includes('King\'s Indian')) 
             ? 'Aggressive' 
             : 'Solid';
 
